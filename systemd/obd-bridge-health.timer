@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic OBD Bridge healthcheck
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=obd-bridge-health.service
+
+[Install]
+WantedBy=timers.target

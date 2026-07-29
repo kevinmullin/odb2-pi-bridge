@@ -1,0 +1,5 @@
+.local-etc/
+*.log
+.DS_Store
+*~
+shellcheck-v*/

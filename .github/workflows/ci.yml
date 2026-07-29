@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  shell:
+    name: Shell syntax + ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Collect scripts
+        id: scripts
+        run: |
+          mapfile -t files < <(find . -type f \( -name '*.sh' -o -path './bin/*' \) ! -path './.git/*' | sort)
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${files[@]}" | tee /tmp/scripts.txt
+
+      - name: bash -n
+        run: |
+          while IFS= read -r f; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done < /tmp/scripts.txt
+
+      - name: shellcheck
+        run: |
+          # SC1091: sourced files resolved on device after install
+          shellcheck -x -e SC1091 $(cat /tmp/scripts.txt)
+
+      - name: systemd unit sanity
+        run: |
+          set -e
+          for u in systemd/*.service systemd/*.timer; do
+            test -s "$u"
+            grep -q '^\[Unit\]' "$u"
+            grep -qE '^\[(Service|Timer)\]' "$u"
+            echo "OK $u"
+          done

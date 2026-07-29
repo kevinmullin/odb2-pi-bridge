@@ -1,0 +1,16 @@
+[Unit]
+Description=OBD Bridge ELM327 TCP proxy (:35000)
+After=obd-bridge-rfcomm.service
+Wants=obd-bridge-rfcomm.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/obd-bridge/config.env
+EnvironmentFile=-/etc/obd-bridge/device.env
+ExecStart=/usr/local/lib/obd-bridge/proxy.sh
+Restart=always
+RestartSec=2
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

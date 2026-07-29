@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# obd-bridge — operator CLI (status, doctor, pair)
+set -euo pipefail
+
+LIB_DIR="/usr/local/lib/obd-bridge"
+if [[ ! -f "${LIB_DIR}/lib.sh" ]]; then
+  # Running from a git checkout before install
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  LIB_DIR="${ROOT}/scripts"
+  export REPO_ROOT="${ROOT}"
+  export OBD_BRIDGE_ETC="${OBD_BRIDGE_ETC:-${ROOT}/.local-etc}"
+  mkdir -p "${OBD_BRIDGE_ETC}"
+fi
+
+# shellcheck source=/dev/null
+source "${LIB_DIR}/lib.sh"
+load_config
+
+usage() {
+  cat <<EOF
+Usage: obd-bridge <command>
+
+  status   Show AP / Bluetooth / RFCOMM / TCP listen state
+  doctor   Actionable checks for common failures
+  pair     Discover/pair/trust BAFX (requires sudo, adapter powered)
+  help     Show this help
+EOF
+}
+
+cmd_status() {
+  echo "=== OBD Bridge status ==="
+  echo "config: ${CONFIG_ENV:-?}"
+  echo "SSID:   ${AP_SSID}"
+  echo "AP IP:  ${AP_IP}"
+  echo "TCP:    ${ELM_TCP_PORT}"
+  echo "MAC:    ${BT_MAC:-unset}"
+  echo
+
+  if ip -4 addr show "${AP_IFACE}" 2>/dev/null | grep -q "${AP_IP}"; then
+    echo "AP iface ${AP_IFACE}: UP (${AP_IP})"
+  else
+    echo "AP iface ${AP_IFACE}: MISSING ${AP_IP}"
+  fi
+
+  if systemctl is-active --quiet hostapd 2>/dev/null; then
+    echo "hostapd: active"
+  else
+    echo "hostapd: inactive"
+  fi
+
+  if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    echo "dnsmasq: active"
+  else
+    echo "dnsmasq: inactive"
+  fi
+
+  if bt_adapter_ready; then
+    echo "bluetooth: adapter ready"
+  else
+    echo "bluetooth: not ready"
+  fi
+
+  if [[ -e "${RFCOMM_DEV}" ]]; then
+    echo "rfcomm: ${RFCOMM_DEV} present"
+  else
+    echo "rfcomm: ${RFCOMM_DEV} missing"
+  fi
+
+  if systemctl is-active --quiet obd-bridge-rfcomm 2>/dev/null; then
+    echo "obd-bridge-rfcomm: active"
+  else
+    echo "obd-bridge-rfcomm: inactive"
+  fi
+
+  if systemctl is-active --quiet obd-bridge-proxy 2>/dev/null; then
+    echo "obd-bridge-proxy: active"
+  else
+    echo "obd-bridge-proxy: inactive"
+  fi
+
+  if ss -lnt 2>/dev/null | grep -q ":${ELM_TCP_PORT} "; then
+    echo "tcp :${ELM_TCP_PORT}: listening"
+  else
+    echo "tcp :${ELM_TCP_PORT}: not listening"
+  fi
+}
+
+cmd_doctor() {
+  local rc=0
+  echo "=== OBD Bridge doctor ==="
+
+  if [[ ! -f /etc/obd-bridge/config.env ]]; then
+    echo "FAIL: not installed — run sudo ./install.sh from the repo"
+    return 1
+  fi
+
+  if ! ip -4 addr show "${AP_IFACE}" 2>/dev/null | grep -q "${AP_IP}"; then
+    echo "FAIL: ${AP_IFACE} lacks ${AP_IP} — check hostapd / systemd-networkd"
+    rc=1
+  else
+    echo "OK: AP address ${AP_IP} on ${AP_IFACE}"
+  fi
+
+  if ! systemctl is-active --quiet hostapd 2>/dev/null; then
+    echo "FAIL: hostapd not active — set Wi-Fi country (sudo raspi-config) and journalctl -u hostapd"
+    rc=1
+  else
+    echo "OK: hostapd active"
+  fi
+
+  if ! systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    echo "WARN: dnsmasq not active — DHCP for phones may fail"
+    rc=1
+  else
+    echo "OK: dnsmasq active"
+  fi
+
+  if ! bt_adapter_ready; then
+    echo "FAIL: Bluetooth adapter not ready"
+    rc=1
+  else
+    echo "OK: Bluetooth adapter ready"
+  fi
+
+  if [[ -z "${BT_MAC:-}" ]]; then
+    echo "FAIL: no BT_MAC — power BAFX and run: sudo obd-bridge pair"
+    rc=1
+  else
+    echo "OK: BT_MAC=${BT_MAC}"
+  fi
+
+  if [[ ! -e "${RFCOMM_DEV}" ]]; then
+    echo "WARN: ${RFCOMM_DEV} missing — normal if ignition is OFF; otherwise check rfcomm service"
+  else
+    echo "OK: ${RFCOMM_DEV} present"
+  fi
+
+  if ! ss -lnt 2>/dev/null | grep -q ":${ELM_TCP_PORT} "; then
+    echo "WARN: not listening on :${ELM_TCP_PORT} — proxy waits for RFCOMM"
+  else
+    echo "OK: listening on :${ELM_TCP_PORT}"
+  fi
+
+  if [[ "${rc}" -eq 0 ]]; then
+    echo "Doctor: no hard failures."
+  else
+    echo "Doctor: fix FAIL items above."
+  fi
+  return "${rc}"
+}
+
+cmd_pair() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    err "pair requires root: sudo obd-bridge pair"
+    exit 1
+  fi
+  local pair_script="${LIB_DIR}/pair-bafx.sh"
+  if [[ ! -x "${pair_script}" ]]; then
+    err "pair script missing at ${pair_script}"
+    exit 1
+  fi
+  "${pair_script}"
+  systemctl restart obd-bridge-rfcomm.service 2>/dev/null || true
+  systemctl restart obd-bridge-proxy.service 2>/dev/null || true
+  cmd_status
+}
+
+main() {
+  local cmd="${1:-help}"
+  case "${cmd}" in
+    status) cmd_status ;;
+    doctor) cmd_doctor ;;
+    pair) cmd_pair ;;
+    help|--help|-h) usage ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

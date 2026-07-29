@@ -1,0 +1,9 @@
+[Unit]
+Description=OBD Bridge healthcheck
+After=obd-bridge-proxy.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/obd-bridge/config.env
+EnvironmentFile=-/etc/obd-bridge/device.env
+ExecStart=/usr/local/lib/obd-bridge/healthcheck.sh

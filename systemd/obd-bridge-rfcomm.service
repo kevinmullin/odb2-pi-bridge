@@ -1,0 +1,17 @@
+[Unit]
+Description=OBD Bridge RFCOMM (BAFX Bluetooth SPP)
+After=bluetooth.service network.target
+Wants=bluetooth.service
+ConditionPathExists=/etc/obd-bridge/device.env
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/obd-bridge/config.env
+EnvironmentFile=-/etc/obd-bridge/device.env
+ExecStart=/usr/local/lib/obd-bridge/rfcomm-bind.sh
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
