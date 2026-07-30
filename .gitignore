@@ -3,3 +3,4 @@
 .DS_Store
 *~
 shellcheck-v*/
+obd-bridge:dev.stamp

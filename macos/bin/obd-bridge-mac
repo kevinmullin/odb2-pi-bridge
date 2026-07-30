@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# obd-bridge-mac — macOS bench bridge CLI
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/config.env"
+
+PIDFILE="${TMPDIR:-/tmp}/obd-bridge-mac.pid"
+LOGFILE="${HOME}/Library/Logs/obd-bridge-proxy.log"
+
+usage() {
+  cat <<EOF
+Usage: obd-bridge-mac <command>
+
+  find-device  Print matching /dev/cu.* for the ELM/BAFX adapter
+  start        Start TCP↔serial proxy in background
+  stop         Stop background proxy (and unload LaunchAgent if loaded)
+  status       Show device, port, and process state
+  doctor       Actionable checks for bench testing
+  help         Show this help
+EOF
+}
+
+lan_ips() {
+  local ip
+  for iface in en0 en1 en2; do
+    ip="$(ipconfig getifaddr "${iface}" 2>/dev/null || true)"
+    if [[ -n "${ip}" ]]; then
+      echo "${iface}: ${ip}"
+    fi
+  done
+}
+
+cmd_find() {
+  "${ROOT}/scripts/find-cu.sh"
+}
+
+cmd_start() {
+  mkdir -p "$(dirname "${LOGFILE}")"
+  if [[ -f "${PIDFILE}" ]] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null; then
+    echo "Already running pid $(cat "${PIDFILE}")"
+    return 0
+  fi
+  nohup "${ROOT}/scripts/proxy.sh" >>"${LOGFILE}" 2>&1 &
+  echo $! >"${PIDFILE}"
+  echo "Started pid $(cat "${PIDFILE}") — log ${LOGFILE}"
+  echo "Car Scanner → Wi-Fi → one of:"
+  lan_ips
+  echo "  port ${ELM_TCP_PORT:-35000}"
+}
+
+cmd_stop() {
+  if [[ -f "${PIDFILE}" ]]; then
+    kill "$(cat "${PIDFILE}")" 2>/dev/null || true
+    rm -f "${PIDFILE}"
+  fi
+  pkill -f "${ROOT}/scripts/proxy.sh" 2>/dev/null || true
+  launchctl bootout "gui/$(id -u)/com.obdbridge.proxy" 2>/dev/null || true
+  echo "Stopped."
+}
+
+cmd_status() {
+  echo "=== obd-bridge-mac status ==="
+  echo "port: ${ELM_TCP_PORT:-35000}"
+  if DEV="$("${ROOT}/scripts/find-cu.sh" 2>/dev/null)"; then
+    echo "cu:   ${DEV}"
+  else
+    echo "cu:   (not found — pair adapter / power 12V)"
+  fi
+  if [[ -f "${PIDFILE}" ]] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null; then
+    echo "proxy: running pid $(cat "${PIDFILE}")"
+  else
+    echo "proxy: not running (background pidfile)"
+  fi
+  if lsof -nP -iTCP:"${ELM_TCP_PORT:-35000}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "tcp:   listening on ${ELM_TCP_PORT:-35000}"
+  else
+    echo "tcp:   not listening"
+  fi
+  echo "LAN:"
+  lan_ips | sed 's/^/  /' || echo "  (none)"
+}
+
+cmd_doctor() {
+  local rc=0
+  echo "=== obd-bridge-mac doctor ==="
+  if ! command -v socat >/dev/null 2>&1; then
+    echo "FAIL: socat missing — run make macos-setup"
+    rc=1
+  else
+    echo "OK: socat $(command -v socat)"
+  fi
+  if DEV="$("${ROOT}/scripts/find-cu.sh" 2>/dev/null)"; then
+    echo "OK: serial ${DEV}"
+  else
+    echo "FAIL: no cu device — 12V on OBD pin 16, pair in System Settings (PIN 1234)"
+    rc=1
+  fi
+  if lsof -nP -iTCP:"${ELM_TCP_PORT:-35000}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "OK: listening :${ELM_TCP_PORT:-35000}"
+  else
+    echo "WARN: not listening — obd-bridge-mac start (or make simulate for visuals)"
+  fi
+  echo "Use these IPs in Car Scanner:"
+  lan_ips | sed 's/^/  /' || true
+  return "${rc}"
+}
+
+main() {
+  case "${1:-help}" in
+    find-device) cmd_find ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    status) cmd_status ;;
+    doctor) cmd_doctor ;;
+    help|--help|-h) usage ;;
+    *) usage; exit 1 ;;
+  esac
+}
+
+main "$@"

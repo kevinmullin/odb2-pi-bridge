@@ -1,60 +1,87 @@
-# OBD Bridge (Pi → iPhone)
+# OBD Bridge (omni) — Pi · Mac · Simulator
 
-Turn an **Android-only classic Bluetooth** ELM327 / BAFX adapter into a **Wi‑Fi ELM327** on a Raspberry Pi so **Car Scanner** (or OBD Fusion) on iPhone can read live data — including temps on a Subaru Crosstrek.
+Vehicle-agnostic **ELM327 bridge**: turn an Android-only classic Bluetooth OBD adapter (e.g. BAFX) into a **Wi‑Fi ELM327** on TCP `:35000` for **Car Scanner** / OBD Fusion on iPhone.
+
+Works with **any typical OBD-II car within reason** (US 1996+), including:
+
+- Subaru Crosstrek  
+- Nissan Kicks  
+- Other ELM327-compatible gas / light trucks  
+
+Brand extras (CVT ATF, etc.) come from **Car Scanner manufacturer profiles** on a real car — not from this bridge.
 
 ```
-Car ECU → BAFX (classic BT) → Raspberry Pi 3 → Wi-Fi AP + TCP :35000 → iPhone app
+Car ECU → BAFX (classic BT) → Pi or Mac → TCP :35000 → iPhone app
+          or: make simulate (fake ECU) ──────────────────↗
 ```
 
-Target board for testing: **Raspberry Pi 3** (works on other Pi boards with classic Bluetooth).
+## Quick paths
 
-## What is automated
+### 1) See gauges before the car (recommended first)
 
-After Raspberry Pi OS is on the SD card and the Pi has network **once** for `apt`:
+Requires Docker:
+
+```bash
+git clone https://github.com/kevinmullin/odb2-pi-bridge.git
+cd odb2-pi-bridge
+make simulate                 # PROFILE=generic
+# make simulate PROFILE=subaru
+# make simulate PROFILE=nissan
+```
+
+iPhone on the same Wi‑Fi → Car Scanner → Wi‑Fi → **your computer’s LAN IP** port **35000**.
+
+Details: [simulator/README.md](simulator/README.md)
+
+### 2) MacBook hardware connection test
+
+```bash
+make macos-setup
+# 12V on OBD pin 16 → pair BAFX in System Settings → Bluetooth
+obd-bridge-mac start
+```
+
+Docs: [macos/README.md](macos/README.md)
+
+### 3) Raspberry Pi in-car deploy
 
 ```bash
 sudo ./install.sh
 ```
 
-That installs packages, Wi‑Fi AP, Bluetooth pairing (if the adapter is powered), systemd services, and enables boot/ignition reconnect. No SSH needed for normal car use after that.
+Pi creates Wi‑Fi AP **`obd-bridge`** (password `obdbridge1` by default) at `192.168.4.1:35000`.
 
-## Still manual
+## Make / Docker
 
-1. Flash **Raspberry Pi OS Lite**, enable SSH, set Wi‑Fi country (`raspi-config`).
-2. Plug in BAFX + power the Pi (physical).
-3. Prefer **ethernet** during first install (AP mode takes over `wlan0`).
-4. iPhone: install **Car Scanner ELM OBD2**, join the Pi SSID, set Wi‑Fi adapter IP/port once.
+| Target | Purpose |
+|--------|---------|
+| `make build` / `make ci` | Lint in Docker (`bash -n`, ShellCheck, systemd units) |
+| `make simulate` | ELM/ECU simulator on `:35000` |
+| `make simulate-stop` | Stop simulator |
+| `make macos-setup` | Host socat + LaunchAgent (macOS) |
+| `make clean` | Remove project images/containers |
 
-## Quick start
+Bluetooth bridging is **not** run inside Docker (especially on Mac). Simulator and lint are containerized.
 
-1. Clone on the Pi (with internet):
+## Pi install (car)
 
-   ```bash
-   git clone https://github.com/kevinmullin/odb2-pi-bridge.git
-   cd odb2-pi-bridge
-   # optional: edit config.env (SSID / password / BT_MAC)
-   sudo ./install.sh
-   ```
+1. Flash Raspberry Pi OS Lite (Pi 3 recommended), SSH, set Wi‑Fi country.  
+2. Prefer **ethernet** during first install (`wlan0` becomes the AP).  
+3. Clone repo, optional edit [`config.env`](config.env), then `sudo ./install.sh`.  
+4. Ignition ON for pairing (or `sudo obd-bridge pair` later).  
+5. iPhone → join **`obd-bridge`** → Car Scanner Wi‑Fi `192.168.4.1:35000`.  
+6. Enable Subaru / Nissan / generic profile sensors in the app as needed.
 
-2. Ignition **ON** so the BAFX is powered during install (or run `sudo obd-bridge pair` later).
-
-3. On iPhone:
-   - Join Wi‑Fi **`crosstrek-obd`** / password **`obdbridge1`** (defaults in `config.env`)
-   - Car Scanner → connection **Wi‑Fi** → **`192.168.4.1`** port **`35000`**
-   - Add gauges (coolant, IAT, ambient, oil, catalyst) and any **Subaru** profile sensors for CVT/ATF temps
-
-4. Check health:
-
-   ```bash
-   obd-bridge status
-   sudo obd-bridge doctor
-   ```
+```bash
+obd-bridge status
+sudo obd-bridge doctor
+```
 
 ## Config (`config.env`)
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AP_SSID` | `crosstrek-obd` | Pi access point name |
+| `AP_SSID` | `obd-bridge` | Pi access point name |
 | `AP_PASS` | `obdbridge1` | WPA2 password (change it) |
 | `AP_IP` | `192.168.4.1` | Pi address / ELM host |
 | `ELM_TCP_PORT` | `35000` | Standard Wi‑Fi ELM327 port |
@@ -62,48 +89,37 @@ That installs packages, Wi‑Fi AP, Bluetooth pairing (if the adapter is powered
 | `BT_NAME_REGEX` | `OBDII\|ELM327\|…` | Discovery name filter |
 | `BT_MAC` | *(empty)* | Skip discovery if set |
 
-Installed copy: `/etc/obd-bridge/config.env`  
-Paired adapter: `/etc/obd-bridge/device.env`
+Installed copy: `/etc/obd-bridge/config.env`
 
-## Commands
+## Commands (Pi)
 
 | Command | Purpose |
 |---------|---------|
 | `sudo ./install.sh` | Idempotent full setup |
-| `sudo ./uninstall.sh` | Remove services (keeps `/etc/obd-bridge`) |
-| `sudo ./uninstall.sh --purge` | Also delete config/device env |
-| `obd-bridge status` | AP / BT / RFCOMM / TCP |
-| `obd-bridge doctor` | Actionable failures |
-| `sudo obd-bridge pair` | Re-discover / pair BAFX |
+| `sudo ./uninstall.sh` | Remove services |
+| `sudo ./uninstall.sh --purge` | Also delete `/etc/obd-bridge` |
+| `obd-bridge status` / `doctor` / `pair` | Operator helpers |
 
-Skip pairing during install: `sudo SKIP_PAIR=1 ./install.sh`
+`SKIP_PAIR=1 sudo ./install.sh` skips Bluetooth pairing during install.
 
-## Runtime behavior
+## Standard vs enhanced data
 
-- **`obd-bridge-rfcomm`**: reconnects classic Bluetooth SPP whenever the adapter appears (ignition ON).
-- **`obd-bridge-proxy`**: `socat` TCP `:35000` ↔ `/dev/rfcomm0` (Wi‑Fi ELM327 compatible).
-- **`obd-bridge-health.timer`**: periodic journal status lines.
+| Source | What you get |
+|--------|----------------|
+| Bridge + standard Mode 01 | Coolant, IAT, ambient, oil, catalyst (if ECU supports) |
+| Car Scanner Subaru/Nissan profiles | Brand sensors (e.g. CVT fluid) on a **real** car |
+| `make simulate` | Fake animated standard temps for UI dry-run |
 
-## Validation checklist
+## Validation
 
-- [ ] `sudo ./install.sh` with BAFX powered → `obd-bridge doctor` mostly OK
-- [ ] Reboot Pi with car off → AP still up; services retry without crashing
-- [ ] Ignition ON → within ~60s, from a client on the AP:  
-      `printf 'ATZ\r' | nc 192.168.4.1 35000`
-- [ ] Car Scanner shows live coolant + IAT; cold-start reconnect works without SSH
+- [ ] `make build` passes  
+- [ ] `make simulate` + Car Scanner shows moving temps  
+- [ ] (Optional) Mac + 12V BAFX: `ATZ` via `nc`  
+- [ ] Pi + car: live coolant/IAT; cold-start reconnect without SSH  
 
-## Uninstall
+## Why no Bluetooth-in-Docker?
 
-```bash
-sudo ./uninstall.sh          # keep /etc/obd-bridge
-sudo ./uninstall.sh --purge  # remove everything bridge-related
-```
-
-`hostapd` / `dnsmasq` packages remain installed.
-
-## CI
-
-GitHub Actions runs `bash -n` and ShellCheck on scripts (no hardware Bluetooth/AP test on hosted runners).
+Docker Desktop on Mac cannot pass classic Bluetooth RFCOMM to Linux containers. On a Pi, host systemd is simpler and more reliable than privileged BlueZ-in-Docker. See [macos/README.md](macos/README.md).
 
 ## License
 

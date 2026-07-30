@@ -52,7 +52,7 @@ load_config() {
     set +a
   fi
 
-  AP_SSID="${AP_SSID:-crosstrek-obd}"
+  AP_SSID="${AP_SSID:-obd-bridge}"
   AP_PASS="${AP_PASS:-obdbridge1}"
   AP_IP="${AP_IP:-192.168.4.1}"
   AP_CIDR="${AP_CIDR:-24}"
