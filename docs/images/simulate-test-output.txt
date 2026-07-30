@@ -1,0 +1,23 @@
+banner: b'\r\n>'
+sent:   b'ATZ\r'
+reply:  b'ATZ\rELM327 v2.1\r>'
+text:
+ATZ
+ELM327 v2.1
+>
+OK
+banner: b'\r\n>'
+sent:   b'0105\r'
+reply:  b'0105\rSEARCHING...\r41 05 94\r>'
+text:
+0105
+SEARCHING...
+41 05 94
+>
+OK
+ATE0
+OK
+>
+41 05 94
+>
+coolant_c=108
