@@ -46,6 +46,10 @@ dump_bt_scan() {
     fi
     echo "devices Paired:"
     bluetoothctl devices Paired 2>/dev/null || echo "(none)"
+    if [[ -f "${dir}/hcitool-last.txt" ]]; then
+      echo "hcitool classic:"
+      cat "${dir}/hcitool-last.txt"
+    fi
     echo
   } | tee "${latest}" >>"${hist}"
   # Cap history ~2000 lines
@@ -106,12 +110,13 @@ load_config() {
   AP_DHCP_START="${AP_DHCP_START:-192.168.4.50}"
   AP_DHCP_END="${AP_DHCP_END:-192.168.4.150}"
   AP_IFACE="${AP_IFACE:-wlan0}"
+  ENABLE_AP="${ENABLE_AP:-0}"
   ELM_TCP_PORT="${ELM_TCP_PORT:-35000}"
   RFCOMM_DEV="${RFCOMM_DEV:-/dev/rfcomm0}"
   RFCOMM_CHANNEL="${RFCOMM_CHANNEL:-1}"
   BT_PIN="${BT_PIN:-1234}"
   BT_NAME_REGEX="${BT_NAME_REGEX:-OBDII|ELM327|V-LINK|BAFX|OBD}"
-  BT_SCAN_SECONDS="${BT_SCAN_SECONDS:-20}"
+  BT_SCAN_SECONDS="${BT_SCAN_SECONDS:-30}"
   RFCOMM_RETRY_SECONDS="${RFCOMM_RETRY_SECONDS:-5}"
   PROXY_WAIT_SECONDS="${PROXY_WAIT_SECONDS:-2}"
 }

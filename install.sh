@@ -16,10 +16,17 @@ load_config
 SKIP_PAIR="${SKIP_PAIR:-0}"
 PAIR_ON_INSTALL="${PAIR_ON_INSTALL:-1}"
 ENABLE_PITFT="${ENABLE_PITFT:-1}"
+ENABLE_AP="${ENABLE_AP:-0}"
 
 apt_install() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
+  apt-get install -y --no-install-recommends \
+    bluetooth bluez bluez-tools bluez-hcidump \
+    hostapd dnsmasq socat rfkill \
+    iproute2 iptables expect \
+    net-tools python3 python3-pygame python3-serial \
+    libegl1 libgbm1 || \
   apt-get install -y --no-install-recommends \
     bluetooth bluez bluez-tools \
     hostapd dnsmasq socat rfkill \
@@ -178,28 +185,36 @@ install_systemd_units() {
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-pitft.service" /etc/systemd/system/
 
   systemctl daemon-reload
-  systemctl unmask hostapd 2>/dev/null || true
-  systemctl enable hostapd dnsmasq
+
   systemctl enable obd-bridge-rfcomm.service
   systemctl enable obd-bridge-live.service
   systemctl enable obd-bridge-health.timer
   systemctl enable obd-bridge-autopair.service
-  # Live hub replaces socat proxy (still installed for manual use)
   systemctl disable obd-bridge-proxy.service 2>/dev/null || true
 
   if [[ "${ENABLE_PITFT}" == "1" ]]; then
     systemctl enable obd-bridge-pitft.service
-    log "PiTFT UI enabled (temps on screen; needs /dev/fb1 from Adafruit 28r)."
+    log "PiTFT UI enabled."
   fi
 
-  systemctl restart hostapd || {
-    err "hostapd failed to start — check Wi-Fi country code (raspi-config) and ${AP_IFACE}"
-    journalctl -u hostapd -n 30 --no-pager || true
-  }
-  systemctl restart dnsmasq || {
-    err "dnsmasq failed to start"
-    journalctl -u dnsmasq -n 30 --no-pager || true
-  }
+  if [[ "${ENABLE_AP}" == "1" ]]; then
+    systemctl unmask hostapd 2>/dev/null || true
+    systemctl enable hostapd dnsmasq
+    systemctl restart hostapd || {
+      err "hostapd failed — check Wi-Fi country (raspi-config) and ${AP_IFACE}"
+      journalctl -u hostapd -n 30 --no-pager || true
+    }
+    systemctl restart dnsmasq || {
+      err "dnsmasq failed to start"
+      journalctl -u dnsmasq -n 30 --no-pager || true
+    }
+  else
+    log "ENABLE_AP=0 — disabling hostapd/dnsmasq (ethernet + classic BT mode)."
+    systemctl disable --now hostapd dnsmasq 2>/dev/null || true
+    # Free wlan0 from AP static config if we previously installed it
+    rm -f /etc/systemd/network/10-obd-bridge-ap.network
+    rm -f /etc/NetworkManager/conf.d/99-obd-bridge-unmanaged.conf
+  fi
 }
 
 maybe_pair() {
@@ -234,9 +249,19 @@ main() {
   apt_install
   unblock_radios
   install_files
-  render_ap_configs
-  configure_ap_interface
-  configure_dnsmasq
+  # Pick up ENABLE_AP from freshly installed config
+  CONFIG_ENV="${OBD_BRIDGE_ETC}/config.env"
+  load_config || true
+  ENABLE_AP="${ENABLE_AP:-0}"
+  ENABLE_PITFT="${ENABLE_PITFT:-1}"
+
+  if [[ "${ENABLE_AP}" == "1" ]]; then
+    render_ap_configs
+    configure_ap_interface
+    configure_dnsmasq
+  else
+    log "Skipping Wi-Fi AP setup (ENABLE_AP=0 — ethernet + classic BT)."
+  fi
   install_systemd_units
   maybe_pair
   start_bridge_services
@@ -244,20 +269,32 @@ main() {
   log "Running doctor…"
   /usr/local/bin/obd-bridge doctor || true
 
-  cat <<EOF
+  if [[ "${ENABLE_AP}" == "1" ]]; then
+    cat <<EOF
 
-Install complete.
+Install complete (AP mode).
 
   Wi-Fi SSID: ${AP_SSID}
   Password:   ${AP_PASS}
   ELM TCP:    ${AP_IP}:${ELM_TCP_PORT}
 
-iPhone: join the SSID, open Car Scanner → Wi-Fi adapter → ${AP_IP} port ${ELM_TCP_PORT}
+iPhone: join SSID → Car Scanner → ${AP_IP}:${ELM_TCP_PORT}
+EOF
+  else
+    cat <<EOF
 
-Autopair retries in the background until BAFX is seen (ignition ON).
-PiTFT (Adafruit 2.8 resistive): install display first, then this package — UI on /dev/fb1.
+Install complete (ethernet + PiTFT, no Wi-Fi AP).
 
-Commands: obd-bridge status | doctor | pair
+  Classic BT scan for OBDII (Android ELM). Watch PiTFT activity.
+  SSH on ethernet. Scans: obd-bridge bt-seen
+EOF
+  fi
+
+  cat <<EOF
+
+Autopair retries until BAFX is seen (LED on; forget OBDII on phone/Mac).
+Commands: obd-bridge status | doctor | pair | bt-seen
+
 EOF
 }
 

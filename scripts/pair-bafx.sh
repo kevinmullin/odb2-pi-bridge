@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Discover, pair, trust, and persist BAFX / ELM327 Bluetooth adapter MAC.
+# Discover, pair, trust, and persist BAFX / ELM327 classic Bluetooth adapter.
+# Android-only ELM clones are BR/EDR (classic), not BLE — scan accordingly.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,14 +29,61 @@ normalize_mac() {
 }
 
 ensure_agent() {
-  # Non-interactive pairing agent with fixed PIN for classic ELM clones.
-  if ! pgrep -f 'bluetoothctl.*agent' >/dev/null 2>&1; then
-    true
-  fi
   bluetoothctl power on >/dev/null 2>&1 || true
   bluetoothctl pairable on >/dev/null 2>&1 || true
   bluetoothctl discoverable off >/dev/null 2>&1 || true
   printf 'agent NoInputNoOutput\ndefault-agent\n' | bluetoothctl >/dev/null 2>&1 || true
+}
+
+# Classic BR/EDR inquiry — required for older Android-only OBDII dongles.
+start_classic_scan() {
+  bluetoothctl power on >/dev/null 2>&1 || true
+  bluetoothctl pairable on >/dev/null 2>&1 || true
+  bluetoothctl scan off >/dev/null 2>&1 || true
+  # Prefer classic inquiry (bredr). Fall back to auto if filter unsupported.
+  if printf 'menu scan\nclear\ntransport bredr\nback\nscan on\n' | bluetoothctl >/dev/null 2>&1; then
+    append_event "classic scan (bredr) on"
+    return 0
+  fi
+  if bluetoothctl scan bredr >/dev/null 2>&1; then
+    append_event "classic scan bredr on"
+    return 0
+  fi
+  bluetoothctl scan on >/dev/null 2>&1 || true
+  append_event "scan on (auto — bredr filter failed)"
+}
+
+stop_scan() {
+  bluetoothctl scan off >/dev/null 2>&1 || true
+}
+
+# hcitool classic inquiry (very reliable for ELM clones when available)
+hcitool_classic_scan() {
+  local secs="${1:-12}"
+  local out=""
+  if ! command -v hcitool >/dev/null 2>&1; then
+    return 0
+  fi
+  # length is in 1.28s units; 10 ≈ 12.8s
+  local length=$(( (secs + 1) * 10 / 13 ))
+  [[ "${length}" -lt 4 ]] && length=4
+  [[ "${length}" -gt 16 ]] && length=16
+  append_event "hcitool classic inquiry ${secs}s"
+  set +e
+  out="$(timeout $((secs + 5)) hcitool -i hci0 scan --flush --length="${length}" 2>/dev/null || true)"
+  set -e
+  if [[ -n "${out}" ]]; then
+    local dir="${OBD_BRIDGE_STATE:-/var/lib/obd-bridge}"
+    mkdir -p "${dir}"
+    printf '%s\n' "${out}" >"${dir}/hcitool-last.txt"
+    printf '%s\n' "${out}" >>"${dir}/bt-scan.log"
+  fi
+  # Emit Device-like lines for matching: "AA:BB:…  Name"
+  printf '%s\n' "${out}" | awk '
+    /^[[:space:]]*[0-9A-Fa-f:]{17}[[:space:]]+/ {
+      mac=$1; $1=""; sub(/^[[:space:]]+/,"");
+      print "Device " toupper(mac) " " $0
+    }'
 }
 
 pair_mac() {
@@ -47,7 +95,6 @@ pair_mac() {
   log "Pairing ${mac} with PIN ${BT_PIN}…"
   ensure_agent
 
-  # Prefer bluez-tools if available for PIN; fall back to bluetoothctl expect-style.
   if command -v bt-agent >/dev/null 2>&1; then
     pkill -f 'bt-agent' >/dev/null 2>&1 || true
     bt-agent -c NoInputNoOutput >/dev/null 2>&1 &
@@ -56,15 +103,14 @@ pair_mac() {
   fi
 
   bluetoothctl remove "${mac}" >/dev/null 2>&1 || true
-  bluetoothctl scan on >/dev/null 2>&1 || true
-  sleep 2
+  start_classic_scan
+  sleep 3
 
-  # Many ELM327 adapters use PIN 1234; register via bluetoothctl expect if present.
   if command -v expect >/dev/null 2>&1; then
     expect <<EOF
 set timeout 45
 spawn bluetoothctl
-expect "# "
+expect -re {# |\\[.*\\]# }
 send "pair ${mac}\r"
 expect {
   "Passkey" { send "${BT_PIN}\r"; exp_continue }
@@ -76,9 +122,9 @@ expect {
   timeout { exit 1 }
 }
 send "trust ${mac}\r"
-expect "# "
+expect -re {# |\\[.*\\]# }
 send "connect ${mac}\r"
-expect "# "
+expect -re {# |\\[.*\\]# }
 send "quit\r"
 expect eof
 EOF
@@ -93,15 +139,13 @@ EOF
     kill "${agent_pid}" >/dev/null 2>&1 || true
   fi
 
-  bluetoothctl scan off >/dev/null 2>&1 || true
+  stop_scan
   bluetoothctl trust "${mac}" >/dev/null 2>&1 || true
 
   if bluetoothctl info "${mac}" 2>/dev/null | grep -qi 'Trusted: yes'; then
     save_device "${mac}" "${name}"
     return 0
   fi
-
-  # Some adapters report paired without Trusted flag momentarily.
   if bluetoothctl info "${mac}" 2>/dev/null | grep -qi 'Paired: yes'; then
     bluetoothctl trust "${mac}" >/dev/null 2>&1 || true
     save_device "${mac}" "${name}"
@@ -113,33 +157,82 @@ EOF
 }
 
 discover_mac() {
-  log "Scanning ${BT_SCAN_SECONDS}s for adapters matching /${BT_NAME_REGEX}/ …"
-  append_event "BT scan ${BT_SCAN_SECONDS}s (watch for OBDII)"
-  bluetoothctl power on >/dev/null 2>&1 || true
-  bluetoothctl pairable on >/dev/null 2>&1 || true
-  bluetoothctl scan on >/dev/null 2>&1 || true
+  local scan_secs="${BT_SCAN_SECONDS:-30}"
+  log "Classic BT scan ${scan_secs}s for /${BT_NAME_REGEX}/ (Android ELM = BR/EDR)…"
+  append_event "classic scan ${scan_secs}s for OBDII"
+
+  # Hostapd on the same Pi 3 radio kills classic inquiry — stop if running.
+  if systemctl is-active --quiet hostapd 2>/dev/null; then
+    append_event "stopping hostapd for classic BT scan"
+    systemctl stop hostapd 2>/dev/null || true
+    sleep 1
+  fi
+
+  start_classic_scan
 
   local elapsed=0
   local step=5
-  while [[ "${elapsed}" -lt "${BT_SCAN_SECONDS}" ]]; do
+  local hci_chunk=""
+  while [[ "${elapsed}" -lt "${scan_secs}" ]]; do
     sleep "${step}"
     elapsed=$((elapsed + step))
-    if [[ "${elapsed}" -gt "${BT_SCAN_SECONDS}" ]]; then
-      break
-    fi
-    # Early exit if we already see a matching name
+
     if bluetoothctl devices 2>/dev/null | grep -Eiq "${BT_NAME_REGEX}"; then
-      append_event "match visible mid-scan (${elapsed}s)"
-      break
+      stop_scan
+      dump_bt_scan "autopair-classic-match"
+      local line mac name
+      while IFS= read -r line; do
+        mac="$(echo "${line}" | awk '{print $2}')"
+        name="$(echo "${line}" | cut -d' ' -f3-)"
+        if echo "${name}" | grep -Eiq "${BT_NAME_REGEX}"; then
+          append_event "FOUND ${name} ${mac}"
+          printf '%s\t%s\n' "$(normalize_mac "${mac}")" "${name}"
+          return 0
+        fi
+      done < <(bluetoothctl devices 2>/dev/null || true)
     fi
+
+    # Mid-scan classic inquiry via hcitool (every 10s)
+    if [[ $((elapsed % 10)) -eq 0 ]] || [[ "${elapsed}" -ge "${scan_secs}" ]]; then
+      hci_chunk="$(hcitool_classic_scan 8 || true)"
+      if printf '%s\n' "${hci_chunk}" | grep -Eiq "${BT_NAME_REGEX}"; then
+        stop_scan
+        dump_bt_scan "autopair-hcitool-match"
+        local line mac name
+        while IFS= read -r line; do
+          mac="$(echo "${line}" | awk '{print $2}')"
+          name="$(echo "${line}" | cut -d' ' -f3-)"
+          if echo "${name}" | grep -Eiq "${BT_NAME_REGEX}"; then
+            append_event "FOUND ${name} ${mac} (hcitool)"
+            printf '%s\t%s\n' "$(normalize_mac "${mac}")" "${name}"
+            return 0
+          fi
+        done < <(printf '%s\n' "${hci_chunk}")
+      fi
+    fi
+
     if [[ $((elapsed % 10)) -eq 0 ]]; then
-      append_event "still scanning… ${elapsed}s"
+      append_event "still scanning classic… ${elapsed}s"
     fi
   done
-  # Finish remaining sleep if we broke early on match — still give a moment
-  bluetoothctl scan off >/dev/null 2>&1 || true
 
-  dump_bt_scan "autopair-scan"
+  # Final hcitool pass
+  hci_chunk="$(hcitool_classic_scan 12 || true)"
+  stop_scan
+  dump_bt_scan "autopair-classic-scan"
+
+  if printf '%s\n' "${hci_chunk}" | grep -Eiq "${BT_NAME_REGEX}"; then
+    local line mac name
+    while IFS= read -r line; do
+      mac="$(echo "${line}" | awk '{print $2}')"
+      name="$(echo "${line}" | cut -d' ' -f3-)"
+      if echo "${name}" | grep -Eiq "${BT_NAME_REGEX}"; then
+        append_event "FOUND ${name} ${mac} (hcitool)"
+        printf '%s\t%s\n' "$(normalize_mac "${mac}")" "${name}"
+        return 0
+      fi
+    done < <(printf '%s\n' "${hci_chunk}")
+  fi
 
   local line mac name
   while IFS= read -r line; do
@@ -152,29 +245,21 @@ discover_mac() {
     fi
   done < <(bluetoothctl devices 2>/dev/null || true)
 
-  # Surface what we did see on the PiTFT (no SSH needed)
-  local count named_line short_name
+  local count
   count="$(bluetoothctl devices 2>/dev/null | wc -l | tr -d ' ')"
-  append_event "scan done: ${count:-0} BT device(s), no OBD name match"
+  append_event "scan done: ${count:-0} devices, no OBDII (classic)"
   while IFS= read -r line; do
     name="$(echo "${line}" | cut -d' ' -f3-)"
     mac="$(echo "${line}" | awk '{print $2}')"
-    # Skip entries whose "name" is just the MAC repeated
     if [[ -z "${name}" || "${name}" == "${mac}" ]]; then
       continue
     fi
-    short_name="$(echo "${name}" | cut -c1-28)"
-    append_event "saw: ${short_name}"
+    append_event "saw: $(echo "${name}" | cut -c1-28)"
   done < <(bluetoothctl devices 2>/dev/null | head -n 8 || true)
 
-  err "No Bluetooth device matched /${BT_NAME_REGEX}/"
-  named_line="$(bluetoothctl devices 2>/dev/null | awk '{$1="";$2=""; sub(/^  /,""); print}' | grep -v '^$' | grep -Eiv '^[0-9A-Fa-f:]{17}$' | head -n 4 | tr '\n' ',' | sed 's/,$//' || true)"
-  if [[ -n "${named_line}" ]]; then
-    err "Named BT: ${named_line}"
-  else
-    err "Named BT: (none — only unnamed MACs or empty scan)"
-  fi
-  err "Nearby count: ${count:-0}. Need name OBDII with LED on; forget it on phone/Mac first"
+  err "No classic Bluetooth device matched /${BT_NAME_REGEX}/"
+  err "Named BT: $(bluetoothctl devices 2>/dev/null | cut -d' ' -f3- | grep -v '^$' | head -n 4 | tr '\n' ',' | sed 's/,$//' || echo none)"
+  err "Nearby count: ${count:-0}. Need classic OBDII; keep ENABLE_AP=0 on Pi 3"
   return 1
 }
 

@@ -101,21 +101,31 @@ cmd_doctor() {
     return 1
   fi
 
-  if ! ip -4 addr show "${AP_IFACE}" 2>/dev/null | grep -q "${AP_IP}"; then
+  if [[ "${ENABLE_AP:-0}" == "0" ]]; then
+    echo "OK: Wi-Fi AP disabled (ENABLE_AP=0) — ethernet/TFT mode"
+  elif ! ip -4 addr show "${AP_IFACE}" 2>/dev/null | grep -q "${AP_IP}"; then
     echo "FAIL: ${AP_IFACE} lacks ${AP_IP} — check hostapd / systemd-networkd"
     rc=1
   else
     echo "OK: AP address ${AP_IP} on ${AP_IFACE}"
   fi
 
-  if ! systemctl is-active --quiet hostapd 2>/dev/null; then
+  if [[ "${ENABLE_AP:-0}" == "0" ]]; then
+    if systemctl is-active --quiet hostapd 2>/dev/null; then
+      echo "WARN: hostapd still active — run install again or: sudo systemctl disable --now hostapd"
+    else
+      echo "OK: hostapd stopped (good for classic BT on Pi 3)"
+    fi
+  elif ! systemctl is-active --quiet hostapd 2>/dev/null; then
     echo "FAIL: hostapd not active — set Wi-Fi country (sudo raspi-config) and journalctl -u hostapd"
     rc=1
   else
     echo "OK: hostapd active"
   fi
 
-  if ! systemctl is-active --quiet dnsmasq 2>/dev/null; then
+  if [[ "${ENABLE_AP:-0}" == "0" ]]; then
+    echo "OK: dnsmasq not required (AP off)"
+  elif ! systemctl is-active --quiet dnsmasq 2>/dev/null; then
     echo "WARN: dnsmasq not active — DHCP for phones may fail"
     rc=1
   else
