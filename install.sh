@@ -24,7 +24,7 @@ apt_install() {
     bluetooth bluez bluez-tools \
     hostapd dnsmasq socat rfkill \
     iproute2 iptables expect \
-    net-tools python3 python3-pygame
+    net-tools python3 python3-pygame python3-serial
 }
 
 unblock_radios() {
@@ -47,6 +47,7 @@ install_files() {
   install -m 0755 "${REPO_ROOT}/scripts/rfcomm-bind.sh" "${OBD_BRIDGE_LIB}/rfcomm-bind.sh"
   install -m 0755 "${REPO_ROOT}/scripts/proxy.sh" "${OBD_BRIDGE_LIB}/proxy.sh"
   install -m 0755 "${REPO_ROOT}/scripts/healthcheck.sh" "${OBD_BRIDGE_LIB}/healthcheck.sh"
+  install -m 0755 "${REPO_ROOT}/scripts/live_temps.py" "${OBD_BRIDGE_LIB}/live_temps.py"
   install -m 0755 "${REPO_ROOT}/pitft/ui.py" "${OBD_BRIDGE_LIB}/pitft_ui.py"
   install -m 0755 "${REPO_ROOT}/bin/obd-bridge" /usr/local/bin/obd-bridge
 
@@ -171,18 +172,22 @@ install_systemd_units() {
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-health.service" /etc/systemd/system/
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-health.timer" /etc/systemd/system/
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-autopair.service" /etc/systemd/system/
+  install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-live.service" /etc/systemd/system/
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-pitft.service" /etc/systemd/system/
 
   systemctl daemon-reload
   systemctl unmask hostapd 2>/dev/null || true
   systemctl enable hostapd dnsmasq
-  systemctl enable obd-bridge-rfcomm.service obd-bridge-proxy.service
+  systemctl enable obd-bridge-rfcomm.service
+  systemctl enable obd-bridge-live.service
   systemctl enable obd-bridge-health.timer
   systemctl enable obd-bridge-autopair.service
+  # Live hub replaces socat proxy (still installed for manual use)
+  systemctl disable obd-bridge-proxy.service 2>/dev/null || true
 
   if [[ "${ENABLE_PITFT}" == "1" ]]; then
     systemctl enable obd-bridge-pitft.service
-    log "PiTFT UI enabled (needs Adafruit 28r install so /dev/fb1 exists)."
+    log "PiTFT UI enabled (temps on screen; needs /dev/fb1 from Adafruit 28r)."
   fi
 
   systemctl restart hostapd || {
@@ -212,9 +217,10 @@ maybe_pair() {
 }
 
 start_bridge_services() {
+  systemctl stop obd-bridge-proxy.service 2>/dev/null || true
   systemctl restart obd-bridge-autopair.service || true
   systemctl restart obd-bridge-rfcomm.service || true
-  systemctl restart obd-bridge-proxy.service || true
+  systemctl restart obd-bridge-live.service || true
   systemctl start obd-bridge-health.timer || true
   if [[ "${ENABLE_PITFT}" == "1" ]]; then
     systemctl restart obd-bridge-pitft.service || true

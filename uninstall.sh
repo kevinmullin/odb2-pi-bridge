@@ -23,14 +23,15 @@ if [[ -f /etc/obd-bridge/config.env ]]; then
 fi
 
 systemctl stop obd-bridge-proxy.service obd-bridge-rfcomm.service \
-  obd-bridge-autopair.service obd-bridge-pitft.service \
+  obd-bridge-live.service obd-bridge-autopair.service obd-bridge-pitft.service \
   obd-bridge-health.timer obd-bridge-health.service 2>/dev/null || true
 systemctl disable obd-bridge-proxy.service obd-bridge-rfcomm.service \
-  obd-bridge-autopair.service obd-bridge-pitft.service \
+  obd-bridge-live.service obd-bridge-autopair.service obd-bridge-pitft.service \
   obd-bridge-health.timer 2>/dev/null || true
 
 rm -f /etc/systemd/system/obd-bridge-rfcomm.service
 rm -f /etc/systemd/system/obd-bridge-proxy.service
+rm -f /etc/systemd/system/obd-bridge-live.service
 rm -f /etc/systemd/system/obd-bridge-health.service
 rm -f /etc/systemd/system/obd-bridge-health.timer
 rm -f /etc/systemd/system/obd-bridge-autopair.service

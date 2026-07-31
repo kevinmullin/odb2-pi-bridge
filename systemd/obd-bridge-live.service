@@ -1,0 +1,17 @@
+[Unit]
+Description=OBD Bridge live temps (RFCOMM poller + TCP :35000)
+After=obd-bridge-rfcomm.service
+Wants=obd-bridge-rfcomm.service
+Conflicts=obd-bridge-proxy.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/obd-bridge/config.env
+EnvironmentFile=-/etc/obd-bridge/device.env
+Environment=LIVE_ENABLE_TCP=1
+ExecStart=/usr/bin/python3 /usr/local/lib/obd-bridge/live_temps.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

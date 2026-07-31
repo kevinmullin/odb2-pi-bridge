@@ -1,7 +1,7 @@
 [Unit]
 Description=OBD Bridge PiTFT status UI (Adafruit 2.8 resistive)
-After=obd-bridge-autopair.service
-Wants=obd-bridge-autopair.service
+After=obd-bridge-live.service
+Wants=obd-bridge-live.service
 ConditionPathExists=/dev/fb1
 
 [Service]

@@ -38,12 +38,22 @@ sudo reboot
 
 ## What the screen shows
 
-- Wi‑Fi SSID + password (`obd-bridge` / `obdbridge1` by default)
-- ELM address `192.168.4.1:35000`
-- BT MAC or “(not paired)”
-- Phase: waiting / scanning / paired
-- **Pair / Re-pair** — clears saved MAC and kicks autopair
-- **Restart** — restarts RFCOMM + proxy
+**Temps page (default)** — no phone required:
+
+- Coolant / Oil / IAT / Ambient (°C)
+- RPM
+- LIVE / WAIT badge (turns LIVE when coolant PID responds)
+- Values turn yellow/red when hot
+
+**Status page** (tap **Temps/Stat**):
+
+- Wi‑Fi SSID + password
+- ELM `192.168.4.1:35000`
+- BT MAC / pair phase
+
+Buttons: **Temps/Stat** · **Pair** · **Restart**
+
+Live data comes from `obd-bridge-live` (polls the car over Bluetooth). Phone apps can still use `:35000` if you want; the PiTFT does not need them.
 
 ## Car use (no home Wi‑Fi)
 

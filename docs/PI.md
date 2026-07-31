@@ -68,10 +68,10 @@ sudo journalctl -u obd-bridge-autopair -f
 
 | Unit | Role |
 |------|------|
-| `obd-bridge-autopair` | Retry pair until `device.env` has `BT_MAC` |
+| `obd-bridge-live` | Polls coolant/oil/IAT/ambient/RPM → PiTFT; TCP `:35000` |
 | `obd-bridge-rfcomm` | Bluetooth SPP reconnect |
-| `obd-bridge-proxy` | TCP `:35000` ↔ `/dev/rfcomm0` |
-| `obd-bridge-pitft` | 320×240 status UI (`/dev/fb1`) |
+| `obd-bridge-pitft` | 320×240 temps + status UI (`/dev/fb1`) |
+| `obd-bridge-autopair` | Retry pair until `device.env` has `BT_MAC` |
 | `obd-bridge-health.timer` | Journal health lines |
 
 ## Uninstall
