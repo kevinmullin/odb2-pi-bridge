@@ -139,6 +139,8 @@ discover_mac() {
   # Finish remaining sleep if we broke early on match — still give a moment
   bluetoothctl scan off >/dev/null 2>&1 || true
 
+  dump_bt_scan "autopair-scan"
+
   local line mac name
   while IFS= read -r line; do
     mac="$(echo "${line}" | awk '{print $2}')"

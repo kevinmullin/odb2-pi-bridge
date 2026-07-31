@@ -107,6 +107,24 @@ Live data comes from `obd-bridge-live`. Pairing is `obd-bridge-autopair` (no tap
 
 Autopair keeps retrying until the adapter is found — no SSH required.
 
+## Inspect BT devices seen in the car (no SSH out there)
+
+Each autopair scan writes a durable dump (survives reboot):
+
+- Latest: `/var/lib/obd-bridge/bt-last-scan.txt`
+- History: `/var/lib/obd-bridge/bt-scan.log`
+
+Back on home Wi‑Fi/ethernet:
+
+```bash
+obd-bridge bt-seen
+obd-bridge bt-seen --history
+# or:
+cat /var/lib/obd-bridge/bt-last-scan.txt
+```
+
+The TFT activity line `BT dump → /var/lib/obd-bridge/bt-last-scan.txt` means a new dump was written.
+
 ## Survives reboot?
 
 Yes. `install.sh` enables `obd-bridge-pitft` (and `obd-bridge-live`) under systemd. After reboot the UI starts again once `/dev/fb1` (or DRM) is present. `/run/obd-bridge/*.env` is tmpfs and is rewritten by the live/autopair services.

@@ -34,7 +34,7 @@ unblock_radios() {
 }
 
 install_files() {
-  mkdir -p "${OBD_BRIDGE_ETC}" "${OBD_BRIDGE_LIB}" /usr/local/bin
+  mkdir -p "${OBD_BRIDGE_ETC}" "${OBD_BRIDGE_LIB}" /usr/local/bin /var/lib/obd-bridge
 
   install -m 0644 "${REPO_ROOT}/config.env" "${OBD_BRIDGE_ETC}/config.env"
   # Preserve existing device.env

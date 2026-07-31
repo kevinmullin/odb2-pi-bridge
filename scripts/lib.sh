@@ -24,6 +24,41 @@ append_event() {
   fi
 }
 
+# Persistent BT scan dump (survives reboot / bring indoors for SSH)
+# Latest: /var/lib/obd-bridge/bt-last-scan.txt
+# History: /var/lib/obd-bridge/bt-scan.log
+dump_bt_scan() {
+  local note="${1:-scan}"
+  local dir="${OBD_BRIDGE_STATE:-/var/lib/obd-bridge}"
+  local latest="${dir}/bt-last-scan.txt"
+  local hist="${dir}/bt-scan.log"
+  mkdir -p "${dir}"
+  {
+    echo "=== ${note} $(date -Iseconds 2>/dev/null || date) ==="
+    echo "regex=${BT_NAME_REGEX:-OBDII|ELM327|V-LINK|BAFX|OBD}"
+    echo "controller:"
+    bluetoothctl show 2>/dev/null | grep -E '^(Controller|Name:|Powered:|Pairable:|Discovering:)' || true
+    echo "devices:"
+    if bluetoothctl devices 2>/dev/null | grep -q .; then
+      bluetoothctl devices 2>/dev/null
+    else
+      echo "(none)"
+    fi
+    echo "devices Paired:"
+    bluetoothctl devices Paired 2>/dev/null || echo "(none)"
+    echo
+  } | tee "${latest}" >>"${hist}"
+  # Cap history ~2000 lines
+  if [[ -f "${hist}" ]]; then
+    local lines
+    lines="$(wc -l <"${hist}" | tr -d ' ')"
+    if [[ "${lines}" -gt 2000 ]]; then
+      tail -n 1500 "${hist}" >"${hist}.tmp" && mv "${hist}.tmp" "${hist}"
+    fi
+  fi
+  append_event "BT dump → ${latest}"
+}
+
 load_config() {
   local candidates=()
   if [[ -n "${OBD_BRIDGE_CONFIG:-}" ]]; then

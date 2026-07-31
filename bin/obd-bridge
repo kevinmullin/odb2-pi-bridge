@@ -23,6 +23,7 @@ Usage: obd-bridge <command>
   status      Show AP / Bluetooth / RFCOMM / TCP listen state
   doctor      Actionable checks for common failures
   pair        Discover/pair/trust BAFX (requires sudo, adapter powered)
+  bt-seen     Show last Bluetooth scan dump (MACs seen while out)
   mock-live   Fake temps for PiTFT desk test (stops live service)
   mock-stop   Stop mock and restart real live polling
   help        Show this help
@@ -199,6 +200,26 @@ cmd_mock_stop() {
   echo "Mock stopped; obd-bridge-live started."
 }
 
+cmd_bt_seen() {
+  local latest="/var/lib/obd-bridge/bt-last-scan.txt"
+  local hist="/var/lib/obd-bridge/bt-scan.log"
+  if [[ ! -f "${latest}" ]]; then
+    echo "No scan dump yet at ${latest}"
+    echo "Autopair writes this after each BT scan (survives reboot)."
+    return 1
+  fi
+  echo "=== ${latest} ==="
+  cat "${latest}"
+  if [[ "${1:-}" == "--history" || "${1:-}" == "-a" ]]; then
+    echo
+    echo "=== ${hist} (last 80 lines) ==="
+    tail -80 "${hist}" 2>/dev/null || true
+  else
+    echo
+    echo "(full history: obd-bridge bt-seen --history  or  less ${hist})"
+  fi
+}
+
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -206,6 +227,7 @@ main() {
     status) cmd_status ;;
     doctor) cmd_doctor ;;
     pair) cmd_pair ;;
+    bt-seen) cmd_bt_seen "$@" ;;
     mock-live) cmd_mock_live "$@" ;;
     mock-stop) cmd_mock_stop ;;
     help|--help|-h) usage ;;
