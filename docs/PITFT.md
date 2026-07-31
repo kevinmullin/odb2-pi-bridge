@@ -129,8 +129,10 @@ Then `sudo systemctl disable --now obd-bridge-pitft`.
 | Issue | Check |
 |-------|--------|
 | TFT shows only CLI / HDMI mirror | Re-run Adafruit with `--install-type=drivers` (not `console` / `mirror`) |
-| Black screen | Drivers installed? `journalctl -u obd-bridge-pitft`; look for `display ok` |
-| UI not starting | `systemctl status obd-bridge-pitft` — needs `/dev/fb1` or `/dev/dri/card0` |
+| Black screen + `fbcon not available` | Normal on Bookworm — UI falls back to direct `/dev/fb1` blit. `git pull` + reinstall. Optional: add `,drm` to the `pitft28-resistive` dtoverlay and reboot for KMS |
+| `EGL not initialized` | `sudo apt install libegl1 libgbm1` then restart the service |
+| Black screen | `journalctl -u obd-bridge-pitft`; look for `display ok backend=` |
+| UI not starting | Needs `/dev/fb1` or `/dev/dri/card*` |
 | Wrong DRM card | Set `SDL_KMSDRM_DEVICE_INDEX=0` (or `1`/`2`) in the unit / `config.env` |
 | No touch | Resistive needs firm press; `ls /dev/input/event*` |
 | Pair never completes | Ignition ON, LED on, `journalctl -u obd-bridge-autopair -f` |

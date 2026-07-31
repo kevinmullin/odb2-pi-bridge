@@ -24,7 +24,8 @@ apt_install() {
     bluetooth bluez bluez-tools \
     hostapd dnsmasq socat rfkill \
     iproute2 iptables expect \
-    net-tools python3 python3-pygame python3-serial
+    net-tools python3 python3-pygame python3-serial \
+    libegl1 libgbm1
 }
 
 unblock_radios() {
