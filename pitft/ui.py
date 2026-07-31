@@ -5,7 +5,10 @@ Adafruit PiTFT 2.8\" resistive.
 
 Bookworm SDL2 has no fbcon. Order of backends:
   1. KMS/DRM (overlay must include ,drm — SPI shows up under /sys/class/drm)
-  2. Direct RGB565 blit to /dev/fb1 (works with legacy fbtft, no ,drm)
+  2. Direct RGB565 blit to the PiTFT framebuffer (fb0 without HDMI, fb1 with HDMI)
+
+Without HDMI the kernel often renumbers the PiTFT to /dev/fb0 and puts the
+text console on it — we auto-detect the panel and unbind fbcon before drawing.
 """
 
 from __future__ import annotations
@@ -169,10 +172,108 @@ class _RawTouch:
         return clicks
 
 
-def _try_fb1_direct(pygame, fb_path: str) -> Display:
+_PITFT_NAME_HINTS = (
+    "ili934",
+    "st7789",
+    "hx8357",
+    "fbtft",
+    "pitft",
+    "fb_ili",
+    "fb_st",
+    "mi0283",
+    "sainsmart",
+)
+_HDMI_NAME_HINTS = ("vc4", "bcm2708", "bcm2835", "drmfb", "simplefb", "virtio")
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _unbind_fb_console() -> None:
+    """Stop kernel text console from fighting us on the PiTFT."""
+    vt_root = Path("/sys/class/vtconsole")
+    if not vt_root.is_dir():
+        return
+    for bind in sorted(vt_root.glob("vtcon*/bind")):
+        name = _read_text(bind.parent / "name").lower()
+        # Typical: "frame buffer device" — leave pure VGA/dummy alone if named oddly
+        if "frame buffer" in name or "framebuffer" in name or "fbcon" in name:
+            try:
+                bind.write_text("0\n", encoding="utf-8")
+                print(f"pitft_ui: unbound console {bind.parent.name} ({name})", flush=True)
+            except OSError as exc:
+                print(f"pitft_ui: could not unbind {bind}: {exc}", flush=True)
+
+
+def detect_pitft_framebuffer() -> str | None:
+    """Pick the SPI PiTFT node. With HDMI it is often fb1; without HDMI, fb0."""
+    forced = os.environ.get("TFT_FB", "").strip()
+    if forced:
+        return forced if Path(forced).exists() else None
+
+    graphics = Path("/sys/class/graphics")
+    if not graphics.is_dir():
+        for fallback in ("/dev/fb1", "/dev/fb0"):
+            if Path(fallback).exists():
+                return fallback
+        return None
+
+    scored: list[tuple[int, str, str, int, int]] = []
+    for sysfb in sorted(graphics.glob("fb[0-9]*")):
+        dev = Path("/dev") / sysfb.name
+        if not dev.exists():
+            continue
+        name = _read_text(sysfb / "name").lower()
+        vs = _read_text(sysfb / "virtual_size") or "0,0"
+        try:
+            width, height = (int(x) for x in vs.split(",")[:2])
+        except ValueError:
+            width, height = 0, 0
+
+        score = 0
+        if any(h in name for h in _PITFT_NAME_HINTS):
+            score += 100
+        if (width, height) in ((W, H), (H, W)):
+            score += 50
+        # Small SPI panels are never full HD
+        if 0 < width <= 480 and 0 < height <= 320:
+            score += 20
+        if any(h in name for h in _HDMI_NAME_HINTS):
+            score -= 80
+        if width >= 640 or height >= 480:
+            score -= 40
+        scored.append((score, str(dev), name or "?", width, height))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    for score, dev, name, width, height in scored:
+        print(
+            f"pitft_ui: fb candidate {dev} name={name!r} {width}x{height} score={score}",
+            flush=True,
+        )
+    best_score, best_dev, best_name, best_w, best_h = scored[0]
+    if best_score <= 0 and len(scored) > 1:
+        # Ambiguous — prefer non-HDMI sized panel if any score > HDMI
+        return None
+    print(
+        f"pitft_ui: selected {best_dev} ({best_name} {best_w}x{best_h})",
+        flush=True,
+    )
+    return best_dev
+
+
+def _try_fb_direct(pygame, fb_path: str) -> Display:
     fb = Path(fb_path)
     if not fb.exists():
         raise FileNotFoundError(fb)
+
+    _unbind_fb_console()
 
     sysfb = Path("/sys/class/graphics") / fb.name
     bpp = 16
@@ -251,17 +352,16 @@ def _try_fb1_direct(pygame, fb_path: str) -> Display:
             pass
         pygame.quit()
 
-    return Display(pygame, screen, flip, poll_clicks, close, f"fb1-direct:{fb}")
+    return Display(pygame, screen, flip, poll_clicks, close, f"fb-direct:{fb}")
 
 
 def init_display() -> Display:
     import pygame
 
     forced = os.environ.get("TFT_DRIVER", "").strip().lower()
-    fb = os.environ.get("TFT_FB", "/dev/fb1")
     errors: list[str] = []
 
-    # Prefer KMS when SPI DRM exists; otherwise fb1-direct (Bookworm reality).
+    # Prefer KMS when SPI DRM exists; otherwise direct framebuffer blit.
     kms_idxs: list[str] = []
     if forced in ("kmsdrm", "kms"):
         kms_idxs = [
@@ -273,13 +373,18 @@ def init_display() -> Display:
     elif forced in ("fb", "fb1", "framebuffer", "direct"):
         kms_idxs = []
     else:
-        # Only probe KMS indexes that exist as /dev/dri/cardN
-        for idx in ("1", "0", "2"):
+        # Prefer non-zero cards first (SPI often card1 when HDMI is card0)
+        for idx in ("1", "2", "0"):
             if Path(f"/dev/dri/card{idx}").exists():
                 kms_idxs.append(idx)
         env_idx = os.environ.get("SDL_KMSDRM_DEVICE_INDEX", "")
         if env_idx and env_idx not in kms_idxs:
             kms_idxs.insert(0, env_idx)
+
+    # With only HDMI DRM and no SPI drm node, kmsdrm draws on HDMI — skip unless forced.
+    spi_drm = any(Path(p).is_dir() and "SPI" in Path(p).name for p in Path("/sys/class/drm").glob("card*-*"))
+    if forced not in ("kmsdrm", "kms") and not spi_drm:
+        kms_idxs = []
 
     seen: set[str] = set()
     for idx in kms_idxs:
@@ -297,23 +402,27 @@ def init_display() -> Display:
             except Exception:
                 pass
 
-    if forced not in ("kmsdrm", "kms") and Path(fb).exists():
-        try:
-            disp = _try_fb1_direct(pygame, fb)
-            print(f"pitft_ui: display ok backend={disp.backend}", flush=True)
-            return disp
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"fb1-direct {fb}: {exc}")
+    if forced not in ("kmsdrm", "kms"):
+        fb = detect_pitft_framebuffer()
+        if fb:
             try:
-                pygame.quit()
-            except Exception:
-                pass
+                disp = _try_fb_direct(pygame, fb)
+                print(f"pitft_ui: display ok backend={disp.backend}", flush=True)
+                return disp
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"fb-direct {fb}: {exc}")
+                try:
+                    pygame.quit()
+                except Exception:
+                    pass
+        else:
+            errors.append("no PiTFT framebuffer detected (set TFT_FB=/dev/fbN)")
 
     msg = "pitft_ui: no usable display\n" + "\n".join(errors)
     print(msg, file=sys.stderr, flush=True)
     print(
-        "hint: legacy overlay needs dtoverlay=...,drm for kmsdrm, "
-        "or /dev/fb1 for direct blit; install libegl1 libgbm1 for HDMI/SPI DRM",
+        "hint: without HDMI the PiTFT is often /dev/fb0; with HDMI usually /dev/fb1. "
+        "Override with TFT_FB=…; optional dtoverlay=…,drm for KMS.",
         file=sys.stderr,
         flush=True,
     )

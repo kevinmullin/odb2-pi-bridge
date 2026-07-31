@@ -1,18 +1,20 @@
 [Unit]
 Description=OBD Bridge PiTFT status UI (Adafruit 2.8 resistive)
-After=obd-bridge-live.service
+After=obd-bridge-live.service local-fs.target
 Wants=obd-bridge-live.service
-# Legacy fb1 (console/raw) OR Bookworm DRM (Adafruit --install-type=drivers)
+# PiTFT may be fb0 (no HDMI) or fb1 (HDMI present); DRM optional
+ConditionPathExists=|/dev/fb0
 ConditionPathExists=|/dev/fb1
 ConditionPathExists=|/dev/dri/card0
 
 [Service]
 Type=simple
-Environment=TFT_FB=/dev/fb1
+# Leave TFT_FB unset so the UI auto-picks fb0 vs fb1; override in config.env if needed
 EnvironmentFile=-/etc/obd-bridge/config.env
-# Stop anything that owns the TFT so pygame can draw
+# Stop anything that owns the TFT so we can draw
 ExecStartPre=-/bin/sh -c 'systemctl stop fbcp.service 2>/dev/null; pkill -x fbcp || true'
 ExecStartPre=-/bin/sh -c 'systemctl stop con2fbmap.service 2>/dev/null || true'
+ExecStartPre=-/bin/sh -c 'for b in /sys/class/vtconsole/vtcon*/bind; do [ -f "$b" ] || continue; n=$(cat "$(dirname "$b")/name" 2>/dev/null || true); case "$n" in *[Ff]rame\ buffer*|*[Ff]ramebuffer*|*[Ff]bcon*) echo 0 >"$b" || true;; esac; done'
 ExecStart=/usr/bin/python3 /usr/local/lib/obd-bridge/pitft_ui.py
 Restart=always
 RestartSec=3

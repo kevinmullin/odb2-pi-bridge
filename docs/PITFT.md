@@ -35,10 +35,11 @@ sudo -E env PATH=$PATH python3 adafruit-pitft.py \
 4. After reboot, confirm a display path exists:
 
 ```bash
-ls -l /dev/fb1 /dev/dri/card* 2>/dev/null
+ls -l /dev/fb* /dev/dri/card* 2>/dev/null
+for f in /sys/class/graphics/fb*/name; do echo "$f: $(cat "$f")"; done
 ```
 
-Either `/dev/fb1` or a DRM card under `/dev/dri/` is enough.
+With HDMI connected the PiTFT is usually `/dev/fb1`; **without HDMI it is often `/dev/fb0`**. The UI auto-detects; override with `TFT_FB=/dev/fbN` in `/etc/obd-bridge/config.env` if needed.
 
 5. Install OBD bridge (enables autopair + PiTFT UI by default):
 
@@ -150,10 +151,11 @@ Then `sudo systemctl disable --now obd-bridge-pitft`.
 | Issue | Check |
 |-------|--------|
 | TFT shows only CLI / HDMI mirror | Re-run Adafruit with `--install-type=drivers` (not `console` / `mirror`) |
-| Black screen + `fbcon not available` | Normal on Bookworm — UI falls back to direct `/dev/fb1` blit. `git pull` + reinstall. Optional: add `,drm` to the `pitft28-resistive` dtoverlay and reboot for KMS |
+| Black screen + `fbcon not available` | Normal on Bookworm — UI falls back to direct framebuffer blit. `git pull` + reinstall. Optional: add `,drm` to the `pitft28-resistive` dtoverlay and reboot for KMS |
+| CLI on TFT when HDMI unplugged | Fixed by auto-detect fb0/fb1 + unbinding fbcon. `git pull` + reinstall; journal should show `selected /dev/fb0` (no HDMI) or `fb1` (with HDMI) |
 | `EGL not initialized` | `sudo apt install libegl1 libgbm1` then restart the service |
 | Black screen | `journalctl -u obd-bridge-pitft`; look for `display ok backend=` |
-| UI not starting | Needs `/dev/fb1` or `/dev/dri/card*` |
+| UI not starting | Needs `/dev/fb0` or `/dev/fb1` (or DRM) |
 | Wrong DRM card | Set `SDL_KMSDRM_DEVICE_INDEX=0` (or `1`/`2`) in the unit / `config.env` |
 | No touch | Resistive needs firm press; `ls /dev/input/event*` |
 | Pair never completes | Ignition ON, LED on, `journalctl -u obd-bridge-autopair -f` |
