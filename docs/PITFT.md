@@ -90,22 +90,14 @@ sudo pkill -x fbcp || true
 
 ## What the screen shows
 
-**Temps page (default)** — no phone required:
+Single page (no buttons — pair is automatic; reboot by power-cycling):
 
-- Coolant / Oil / IAT / Ambient (°C)
-- RPM
-- LIVE / WAIT badge (turns LIVE when coolant PID responds)
-- Values turn yellow/red when hot
+- Coolant / Oil / IAT / Ambient / RPM (compact)
+- LIVE / WAIT badge
+- Pair phase + MAC + rfcomm link
+- **activity** stream: autopair scan/fail reasons and live-link events in real time
 
-**Status page** (tap **Temps/Stat**):
-
-- Wi‑Fi SSID + password
-- ELM `192.168.4.1:35000`
-- BT MAC / pair phase
-
-Buttons: **Temps/Stat** · **Pair** · **Restart**
-
-Live data comes from `obd-bridge-live` (polls the car over Bluetooth). Phone apps can still use `:35000` if you want; the PiTFT does not need them.
+Live data comes from `obd-bridge-live`. Pairing is `obd-bridge-autopair` (no tap needed).
 
 ## Car use (no home Wi‑Fi)
 
@@ -134,7 +126,7 @@ sudo obd-bridge mock-live --scenario waiting    # WAIT badge / blanks
 sudo obd-bridge mock-stop                 # restores real live polling
 ```
 
-While mock runs, tap **Temps/Stat**, **Pair**, **Restart** on the panel. Pair/Restart still hit real systemd units (safe on the desk).
+While mock runs, watch temps + the activity stream update on the panel. Pairing is automatic (no buttons).
 
 ## Disable UI
 

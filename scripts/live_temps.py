@@ -25,6 +25,7 @@ PORT = int(os.environ.get("ELM_TCP_PORT", "35000"))
 POLL_SECONDS = float(os.environ.get("LIVE_POLL_SECONDS", "1.0"))
 RUN_DIR = Path(os.environ.get("STATUS_DIR", "/run/obd-bridge"))
 LIVE_FILE = RUN_DIR / "live.env"
+EVENTS_FILE = RUN_DIR / "events.log"
 ENABLE_TCP = os.environ.get("LIVE_ENABLE_TCP", "1") == "1"
 
 LOCK = threading.RLock()
@@ -38,16 +39,38 @@ STATE: dict[str, str] = {
     "detail": "starting",
     "updated": "",
 }
+_LAST_EVENT_DETAIL = ""
 
 
 def log(msg: str) -> None:
     print(time.strftime("%Y-%m-%dT%H:%M:%S"), msg, flush=True)
 
 
+def append_event(msg: str) -> None:
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    line = f"{time.strftime('%H:%M:%S')} {msg}\n"
+    with EVENTS_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+    try:
+        lines = EVENTS_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+        if len(lines) > 60:
+            EVENTS_FILE.write_text("\n".join(lines[-60:]) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def note_detail(detail: str) -> None:
+    global _LAST_EVENT_DETAIL
+    if detail and detail != _LAST_EVENT_DETAIL:
+        append_event(detail)
+        _LAST_EVENT_DETAIL = detail
+
+
 def wait_for_device(path: str) -> None:
     log(f"Waiting for {path}…")
     while not Path(path).exists():
         STATE["detail"] = "waiting for rfcomm"
+        note_detail("waiting for rfcomm (pair/ignition?)")
         write_live()
         time.sleep(1)
 
@@ -127,6 +150,7 @@ def poll_once(ser: "serial.Serial") -> None:
         else:
             STATE["ok"] = "0"
             STATE["detail"] = "waiting for ECU data"
+        note_detail(STATE["detail"])
 
 
 class ElmTCPHandler(socketserver.StreamRequestHandler):
@@ -175,6 +199,7 @@ def tcp_server_thread(ser: "serial.Serial") -> None:
 
 def main() -> None:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    append_event("live temps started")
     write_live()
     wait_for_device(RFCOMM)
 
@@ -182,8 +207,10 @@ def main() -> None:
         try:
             ser = open_serial()
             log(f"Opened {RFCOMM}")
+            append_event(f"opened {RFCOMM}")
             init_elm(ser)
             STATE["detail"] = "initialized"
+            note_detail("ELM initialized")
             write_live()
 
             if ENABLE_TCP:
@@ -196,6 +223,7 @@ def main() -> None:
         except (OSError, serial.SerialException) as exc:
             STATE["ok"] = "0"
             STATE["detail"] = f"reconnect: {exc}"
+            note_detail(STATE["detail"])
             write_live()
             log(f"Serial lost ({exc}); retrying…")
             time.sleep(2)

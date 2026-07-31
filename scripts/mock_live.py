@@ -89,6 +89,11 @@ def write_status(*, phase: str, detail: str) -> None:
         encoding="utf-8",
     )
 
+    events = RUN_DIR / "events.log"
+    with events.open("a", encoding="utf-8") as fh:
+        fh.write(f"{time.strftime('%H:%M:%S')} mock {phase}: {detail}\n")
+
+
 
 def scenario_values(name: str, t: float) -> tuple[int, int, int, int, int, str, str, str]:
     """Return coolant, oil, iat, ambient, rpm, ok, live_detail, phase."""

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Continuously ensure BAFX is paired. Safe with no SSH / no home Wi-Fi.
-# Once paired, idles and re-checks; if device.env cleared (TFT re-pair), scans again.
+# Once paired, idles and re-checks; if device.env cleared, scans again.
+# Writes status.env + events.log for the PiTFT activity stream.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,13 +15,13 @@ RETRY_SECONDS="${AUTOPAIR_RETRY_SECONDS:-15}"
 IDLE_SECONDS="${AUTOPAIR_IDLE_SECONDS:-60}"
 STATUS_DIR="${STATUS_DIR:-/run/obd-bridge}"
 STATUS_FILE="${STATUS_DIR}/status.env"
+export STATUS_DIR
 
 mkdir -p "${STATUS_DIR}" "${OBD_BRIDGE_ETC}"
 
 write_status() {
   local phase="$1"
   local detail="${2:-}"
-  # Refresh config-derived fields each write
   load_config || true
   cat >"${STATUS_FILE}" <<EOF
 PHASE=${phase}
@@ -45,33 +46,75 @@ read_device() {
   fi
 }
 
+last_pair_reason() {
+  # Prefer last ERROR line from pair script output.
+  local blob="$1"
+  local line
+  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR:' | tail -n 1 | sed 's/.*ERROR: //' || true)"
+  if [[ -n "${line}" ]]; then
+    printf '%s\n' "${line}"
+    return
+  fi
+  line="$(printf '%s\n' "${blob}" | tail -n 1 || true)"
+  printf '%s\n' "${line:-pair failed}"
+}
+
+append_event "autopair started (retry ${RETRY_SECONDS}s)"
 log "Autopair supervisor started (retry=${RETRY_SECONDS}s)."
+write_status "starting" "Autopair starting…"
 
 while true; do
   read_device
   if [[ -n "${BT_MAC:-}" ]]; then
-    write_status "paired" "${BT_MAC}"
+    write_status "paired" "Paired ${BT_MAC}"
+    append_event "paired ${BT_MAC} — idle ${IDLE_SECONDS}s"
     sleep "${IDLE_SECONDS}"
     continue
   fi
 
-  write_status "waiting" "Ignition ON + plug BAFX"
+  if ! bt_adapter_ready; then
+    write_status "bt-down" "Bluetooth adapter not ready"
+    append_event "BT adapter not ready — wait"
+    sleep "${RETRY_SECONDS}"
+    continue
+  fi
+
+  write_status "waiting" "Ignition ON + BAFX LED on"
+  append_event "no MAC yet — need BAFX + ignition"
   log "No BT_MAC yet — scanning/pairing…"
-  write_status "scanning" "Looking for ELM/BAFX…"
+
+  write_status "scanning" "Scan ${BT_SCAN_SECONDS}s /${BT_NAME_REGEX}/"
+  append_event "scanning ${BT_SCAN_SECONDS}s for /${BT_NAME_REGEX}/"
+
   set +e
-  "${SCRIPT_DIR}/pair-bafx.sh"
+  pair_out="$("${SCRIPT_DIR}/pair-bafx.sh" 2>&1)"
   rc=$?
   set -e
+  if [[ -n "${pair_out}" ]]; then
+    log "pair-bafx: $(printf '%s' "${pair_out}" | tr '\n' ' ' | cut -c1-200)"
+  fi
+
   if [[ "${rc}" -eq 0 ]]; then
     read_device
-    write_status "paired" "${BT_MAC:-ok}"
-    log "Paired ${BT_MAC:-}. Restarting RFCOMM/proxy."
+    write_status "paired" "Paired ${BT_MAC:-ok}"
+    append_event "PAIR OK ${BT_MAC:-}"
+    log "Paired ${BT_MAC:-}. Restarting RFCOMM/live."
     systemctl restart obd-bridge-rfcomm.service 2>/dev/null || true
+    systemctl restart obd-bridge-live.service 2>/dev/null || true
     systemctl restart obd-bridge-proxy.service 2>/dev/null || true
     sleep "${IDLE_SECONDS}"
     continue
   fi
-  write_status "retry" "Pair failed; retry in ${RETRY_SECONDS}s"
-  log "Pair attempt failed (rc=${rc}); sleep ${RETRY_SECONDS}s"
+
+  reason="$(last_pair_reason "${pair_out}")"
+  # Keep DETAIL short for status.env; full reason also in events.log
+  short="${reason}"
+  if [[ ${#short} -gt 48 ]]; then
+    short="${short:0:45}…"
+  fi
+  write_status "retry" "${short}"
+  append_event "FAIL: ${reason}"
+  append_event "retry in ${RETRY_SECONDS}s"
+  log "Pair attempt failed (rc=${rc}): ${reason}; sleep ${RETRY_SECONDS}s"
   sleep "${RETRY_SECONDS}"
 done

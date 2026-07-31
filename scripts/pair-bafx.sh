@@ -133,7 +133,14 @@ discover_mac() {
 
   # Also check scan dump via bluetoothctl devices Controllers / recent
   err "No Bluetooth device matched /${BT_NAME_REGEX}/"
-  err "Power the BAFX (ignition ON) and re-run: sudo obd-bridge pair"
+  local seen
+  seen="$(bluetoothctl devices 2>/dev/null | head -n 4 | sed 's/^Device //' || true)"
+  if [[ -n "${seen}" ]]; then
+    err "Nearby BT: $(echo "${seen}" | tr '\n' ' ' | cut -c1-120)"
+  else
+    err "Nearby BT: (none discovered — adapter off or out of range)"
+  fi
+  err "Power the BAFX (ignition ON) and wait for autopair, or: sudo obd-bridge pair"
   err "Or set BT_MAC=.. in ${CONFIG_ENV} and re-run pair."
   return 1
 }

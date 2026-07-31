@@ -12,6 +12,18 @@ CONFIG_ENV="${OBD_BRIDGE_ETC}/config.env"
 log() { printf '%s %s\n' "$(date -Iseconds 2>/dev/null || date)" "$*"; }
 err() { printf '%s ERROR: %s\n' "$(date -Iseconds 2>/dev/null || date)" "$*" >&2; }
 
+# Rolling activity log for the PiTFT (HH:MM:SS message)
+append_event() {
+  local msg="$1"
+  local dir="${STATUS_DIR:-/run/obd-bridge}"
+  local file="${dir}/events.log"
+  mkdir -p "${dir}"
+  printf '%s %s\n' "$(date '+%H:%M:%S')" "${msg}" >>"${file}"
+  if [[ -f "${file}" ]]; then
+    tail -n 60 "${file}" >"${file}.tmp" && mv "${file}.tmp" "${file}"
+  fi
+}
+
 load_config() {
   local candidates=()
   if [[ -n "${OBD_BRIDGE_CONFIG:-}" ]]; then
