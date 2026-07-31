@@ -1,0 +1,19 @@
+[Unit]
+Description=OBD Bridge PiTFT status UI (Adafruit 2.8 resistive)
+After=obd-bridge-autopair.service
+Wants=obd-bridge-autopair.service
+ConditionPathExists=/dev/fb1
+
+[Service]
+Type=simple
+Environment=TFT_FB=/dev/fb1
+Environment=SDL_VIDEODRIVER=fbcon
+Environment=SDL_FBDEV=/dev/fb1
+EnvironmentFile=-/etc/obd-bridge/config.env
+ExecStart=/usr/bin/python3 /usr/local/lib/obd-bridge/pitft_ui.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

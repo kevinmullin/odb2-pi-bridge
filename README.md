@@ -43,7 +43,7 @@ make simulate SCENARIO=overheat
 |------|--------|
 | Simulator visuals | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [docs/SIMULATOR.md](docs/SIMULATOR.md) |
 | Mac + BAFX | [docs/MACOS.md](docs/MACOS.md) |
-| Pi in car | [docs/PI.md](docs/PI.md) |
+| Pi in car | [docs/PI.md](docs/PI.md) · [docs/PITFT.md](docs/PITFT.md) |
 | Errors / `nc` / ignition | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
 
 ## Pi quick install

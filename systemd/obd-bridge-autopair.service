@@ -1,0 +1,15 @@
+[Unit]
+Description=OBD Bridge auto-pair BAFX (retry until paired)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/obd-bridge/config.env
+EnvironmentFile=-/etc/obd-bridge/device.env
+ExecStart=/usr/local/lib/obd-bridge/auto-pair.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

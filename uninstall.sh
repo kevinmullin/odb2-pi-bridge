@@ -22,13 +22,19 @@ if [[ -f /etc/obd-bridge/config.env ]]; then
   set +a
 fi
 
-systemctl stop obd-bridge-proxy.service obd-bridge-rfcomm.service obd-bridge-health.timer obd-bridge-health.service 2>/dev/null || true
-systemctl disable obd-bridge-proxy.service obd-bridge-rfcomm.service obd-bridge-health.timer 2>/dev/null || true
+systemctl stop obd-bridge-proxy.service obd-bridge-rfcomm.service \
+  obd-bridge-autopair.service obd-bridge-pitft.service \
+  obd-bridge-health.timer obd-bridge-health.service 2>/dev/null || true
+systemctl disable obd-bridge-proxy.service obd-bridge-rfcomm.service \
+  obd-bridge-autopair.service obd-bridge-pitft.service \
+  obd-bridge-health.timer 2>/dev/null || true
 
 rm -f /etc/systemd/system/obd-bridge-rfcomm.service
 rm -f /etc/systemd/system/obd-bridge-proxy.service
 rm -f /etc/systemd/system/obd-bridge-health.service
 rm -f /etc/systemd/system/obd-bridge-health.timer
+rm -f /etc/systemd/system/obd-bridge-autopair.service
+rm -f /etc/systemd/system/obd-bridge-pitft.service
 rm -f /etc/systemd/system/hostapd.service.d/override.conf
 rmdir /etc/systemd/system/hostapd.service.d 2>/dev/null || true
 

@@ -15,6 +15,7 @@ load_config
 
 SKIP_PAIR="${SKIP_PAIR:-0}"
 PAIR_ON_INSTALL="${PAIR_ON_INSTALL:-1}"
+ENABLE_PITFT="${ENABLE_PITFT:-1}"
 
 apt_install() {
   export DEBIAN_FRONTEND=noninteractive
@@ -23,7 +24,7 @@ apt_install() {
     bluetooth bluez bluez-tools \
     hostapd dnsmasq socat rfkill \
     iproute2 iptables expect \
-    net-tools
+    net-tools python3 python3-pygame
 }
 
 unblock_radios() {
@@ -42,9 +43,11 @@ install_files() {
 
   install -m 0755 "${REPO_ROOT}/scripts/lib.sh" "${OBD_BRIDGE_LIB}/lib.sh"
   install -m 0755 "${REPO_ROOT}/scripts/pair-bafx.sh" "${OBD_BRIDGE_LIB}/pair-bafx.sh"
+  install -m 0755 "${REPO_ROOT}/scripts/auto-pair.sh" "${OBD_BRIDGE_LIB}/auto-pair.sh"
   install -m 0755 "${REPO_ROOT}/scripts/rfcomm-bind.sh" "${OBD_BRIDGE_LIB}/rfcomm-bind.sh"
   install -m 0755 "${REPO_ROOT}/scripts/proxy.sh" "${OBD_BRIDGE_LIB}/proxy.sh"
   install -m 0755 "${REPO_ROOT}/scripts/healthcheck.sh" "${OBD_BRIDGE_LIB}/healthcheck.sh"
+  install -m 0755 "${REPO_ROOT}/pitft/ui.py" "${OBD_BRIDGE_LIB}/pitft_ui.py"
   install -m 0755 "${REPO_ROOT}/bin/obd-bridge" /usr/local/bin/obd-bridge
 
   # Reload config from installed copy
@@ -167,12 +170,20 @@ install_systemd_units() {
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-proxy.service" /etc/systemd/system/
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-health.service" /etc/systemd/system/
   install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-health.timer" /etc/systemd/system/
+  install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-autopair.service" /etc/systemd/system/
+  install -m 0644 "${REPO_ROOT}/systemd/obd-bridge-pitft.service" /etc/systemd/system/
 
   systemctl daemon-reload
   systemctl unmask hostapd 2>/dev/null || true
   systemctl enable hostapd dnsmasq
   systemctl enable obd-bridge-rfcomm.service obd-bridge-proxy.service
   systemctl enable obd-bridge-health.timer
+  systemctl enable obd-bridge-autopair.service
+
+  if [[ "${ENABLE_PITFT}" == "1" ]]; then
+    systemctl enable obd-bridge-pitft.service
+    log "PiTFT UI enabled (needs Adafruit 28r install so /dev/fb1 exists)."
+  fi
 
   systemctl restart hostapd || {
     err "hostapd failed to start — check Wi-Fi country code (raspi-config) and ${AP_IFACE}"
@@ -194,15 +205,20 @@ maybe_pair() {
   fi
   if ! "${OBD_BRIDGE_LIB}/pair-bafx.sh"; then
     err "Pairing failed or adapter offline. AP/services are installed."
-    err "Power BAFX (ignition ON) and run: sudo obd-bridge pair"
+    err "In the car: ignition ON — autopair keeps retrying (no Wi-Fi needed)."
+    err "Or: sudo obd-bridge pair   /   touch Pair on the PiTFT"
     return 0
   fi
 }
 
 start_bridge_services() {
+  systemctl restart obd-bridge-autopair.service || true
   systemctl restart obd-bridge-rfcomm.service || true
   systemctl restart obd-bridge-proxy.service || true
   systemctl start obd-bridge-health.timer || true
+  if [[ "${ENABLE_PITFT}" == "1" ]]; then
+    systemctl restart obd-bridge-pitft.service || true
+  fi
 }
 
 main() {
@@ -229,6 +245,9 @@ Install complete.
   ELM TCP:    ${AP_IP}:${ELM_TCP_PORT}
 
 iPhone: join the SSID, open Car Scanner → Wi-Fi adapter → ${AP_IP} port ${ELM_TCP_PORT}
+
+Autopair retries in the background until BAFX is seen (ignition ON).
+PiTFT (Adafruit 2.8 resistive): install display first, then this package — UI on /dev/fb1.
 
 Commands: obd-bridge status | doctor | pair
 EOF
