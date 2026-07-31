@@ -20,10 +20,16 @@ usage() {
   cat <<EOF
 Usage: obd-bridge <command>
 
-  status   Show AP / Bluetooth / RFCOMM / TCP listen state
-  doctor   Actionable checks for common failures
-  pair     Discover/pair/trust BAFX (requires sudo, adapter powered)
-  help     Show this help
+  status      Show AP / Bluetooth / RFCOMM / TCP listen state
+  doctor      Actionable checks for common failures
+  pair        Discover/pair/trust BAFX (requires sudo, adapter powered)
+  mock-live   Fake temps for PiTFT desk test (stops live service)
+  mock-stop   Stop mock and restart real live polling
+  help        Show this help
+
+mock-live options (after command):
+  --scenario normal|overheat|waiting   (default: normal)
+  --once                               Write one snapshot and exit
 EOF
 }
 
@@ -162,15 +168,46 @@ cmd_pair() {
   "${pair_script}"
   systemctl restart obd-bridge-rfcomm.service 2>/dev/null || true
   systemctl restart obd-bridge-proxy.service 2>/dev/null || true
+  systemctl restart obd-bridge-live.service 2>/dev/null || true
   cmd_status
+}
+
+cmd_mock_live() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    err "mock-live requires root: sudo obd-bridge mock-live"
+    exit 1
+  fi
+  local mock="${LIB_DIR}/mock_live.py"
+  if [[ ! -f "${mock}" ]]; then
+    err "mock_live.py missing at ${mock} — re-run sudo ./install.sh"
+    exit 1
+  fi
+  systemctl stop obd-bridge-live.service 2>/dev/null || true
+  echo "Stopped obd-bridge-live (so mock is not overwritten)."
+  echo "PiTFT should update within ~1s. Ctrl-C when done, then: sudo obd-bridge mock-stop"
+  exec /usr/bin/python3 "${mock}" "$@"
+}
+
+cmd_mock_stop() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    err "mock-stop requires root: sudo obd-bridge mock-stop"
+    exit 1
+  fi
+  pkill -f '/usr/local/lib/obd-bridge/mock_live.py' 2>/dev/null || true
+  pkill -f 'scripts/mock_live.py' 2>/dev/null || true
+  systemctl start obd-bridge-live.service 2>/dev/null || true
+  echo "Mock stopped; obd-bridge-live started."
 }
 
 main() {
   local cmd="${1:-help}"
+  shift || true
   case "${cmd}" in
     status) cmd_status ;;
     doctor) cmd_doctor ;;
     pair) cmd_pair ;;
+    mock-live) cmd_mock_live "$@" ;;
+    mock-stop) cmd_mock_stop ;;
     help|--help|-h) usage ;;
     *)
       usage

@@ -71,6 +71,7 @@ sudo journalctl -u obd-bridge-autopair -f
 | `obd-bridge-live` | Polls coolant/oil/IAT/ambient/RPM → PiTFT; TCP `:35000` |
 | `obd-bridge-rfcomm` | Bluetooth SPP reconnect |
 | `obd-bridge-pitft` | 320×240 temps + status UI (`/dev/fb1`) |
+| `obd-bridge mock-live` | Desk fake temps for TFT (no car); `mock-stop` restores live |
 | `obd-bridge-autopair` | Retry pair until `device.env` has `BT_MAC` |
 | `obd-bridge-health.timer` | Journal health lines |
 

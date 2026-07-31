@@ -49,6 +49,7 @@ install_files() {
   install -m 0755 "${REPO_ROOT}/scripts/proxy.sh" "${OBD_BRIDGE_LIB}/proxy.sh"
   install -m 0755 "${REPO_ROOT}/scripts/healthcheck.sh" "${OBD_BRIDGE_LIB}/healthcheck.sh"
   install -m 0755 "${REPO_ROOT}/scripts/live_temps.py" "${OBD_BRIDGE_LIB}/live_temps.py"
+  install -m 0755 "${REPO_ROOT}/scripts/mock_live.py" "${OBD_BRIDGE_LIB}/mock_live.py"
   install -m 0755 "${REPO_ROOT}/pitft/ui.py" "${OBD_BRIDGE_LIB}/pitft_ui.py"
   install -m 0755 "${REPO_ROOT}/bin/obd-bridge" /usr/local/bin/obd-bridge
 

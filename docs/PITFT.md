@@ -114,6 +114,27 @@ Live data comes from `obd-bridge-live` (polls the car over Bluetooth). Phone app
 
 Autopair keeps retrying until the adapter is found — no SSH required.
 
+## Survives reboot?
+
+Yes. `install.sh` enables `obd-bridge-pitft` (and `obd-bridge-live`) under systemd. After reboot the UI starts again once `/dev/fb1` (or DRM) is present. `/run/obd-bridge/*.env` is tmpfs and is rewritten by the live/autopair services.
+
+## Desk test without the car (mock temps)
+
+Feeds fake coolant/oil/IAT/RPM into the same files the TFT reads:
+
+```bash
+# after git pull + sudo SKIP_PAIR=1 ./install.sh
+sudo obd-bridge mock-live                 # normal LIVE temps (values drift)
+# other terminal / later:
+sudo obd-bridge mock-live --scenario overheat   # climb into yellow/red
+sudo obd-bridge mock-live --scenario waiting    # WAIT badge / blanks
+
+# when finished:
+sudo obd-bridge mock-stop                 # restores real live polling
+```
+
+While mock runs, tap **Temps/Stat**, **Pair**, **Restart** on the panel. Pair/Restart still hit real systemd units (safe on the desk).
+
 ## Disable UI
 
 In `/etc/obd-bridge/config.env` (or repo `config.env` before install):
