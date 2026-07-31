@@ -1,36 +1,119 @@
 #!/usr/bin/env python3
 """320x240 PiTFT UI — live temps (default) + status/pair page.
 
-Adafruit PiTFT 2.8\" resistive (/dev/fb1). Reads /run/obd-bridge/live.env.
+Adafruit PiTFT 2.8\" resistive. Prefers /dev/fb1 (legacy), then KMS/DRM
+(Bookworm tinydrm / --install-type=drivers).
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
-
-os.environ.setdefault("SDL_VIDEODRIVER", "fbcon")
-os.environ.setdefault("SDL_FBDEV", os.environ.get("TFT_FB", "/dev/fb1"))
-os.environ.setdefault("SDL_NOMOUSE", "0")
-for candidate in (
-    "/dev/input/touchscreen",
-    "/dev/input/event0",
-    "/dev/input/event1",
-    "/dev/input/event2",
-):
-    if Path(candidate).exists():
-        os.environ.setdefault("SDL_MOUSEDEV", candidate)
-        break
-
-import pygame  # noqa: E402
 
 STATUS_FILE = Path("/run/obd-bridge/status.env")
 LIVE_FILE = Path("/run/obd-bridge/live.env")
 DEVICE_ENV = Path("/etc/obd-bridge/device.env")
 CONFIG_ENV = Path("/etc/obd-bridge/config.env")
 W, H = 320, 240
+
+
+def _pick_touch_device() -> None:
+    for candidate in (
+        "/dev/input/touchscreen",
+        "/dev/input/event0",
+        "/dev/input/event1",
+        "/dev/input/event2",
+    ):
+        if Path(candidate).exists():
+            os.environ.setdefault("SDL_MOUSEDEV", candidate)
+            break
+    os.environ.setdefault("SDL_NOMOUSE", "0")
+
+
+def _try_set_mode(driver: str, env: dict[str, str]):
+    """Initialize pygame with a video driver; return surface or raise."""
+    import pygame
+
+    for key in ("SDL_VIDEODRIVER", "SDL_FBDEV", "SDL_KMSDRM_DEVICE_INDEX"):
+        os.environ.pop(key, None)
+    os.environ["SDL_VIDEODRIVER"] = driver
+    os.environ.update(env)
+    _pick_touch_device()
+
+    # Fresh init each attempt — leftover state breaks driver switches.
+    try:
+        pygame.quit()
+    except Exception:
+        pass
+    pygame.init()
+    screen = pygame.display.set_mode((W, H))
+    return screen
+
+
+def init_display():
+    """Open the PiTFT; try framebuffer then KMS/DRM."""
+    import pygame
+
+    forced = os.environ.get("TFT_DRIVER", "").strip().lower()
+    fb = os.environ.get("TFT_FB", "/dev/fb1")
+    errors: list[str] = []
+
+    attempts: list[tuple[str, dict[str, str]]] = []
+    if forced == "kmsdrm" or forced == "kms":
+        for idx in (
+            os.environ.get("SDL_KMSDRM_DEVICE_INDEX", "1"),
+            "0",
+            "1",
+            "2",
+        ):
+            attempts.append(("kmsdrm", {"SDL_KMSDRM_DEVICE_INDEX": idx}))
+    elif forced in ("fbcon", "fb", "framebuffer"):
+        attempts.append(("fbcon", {"SDL_FBDEV": fb}))
+    else:
+        if Path(fb).exists():
+            attempts.append(("fbcon", {"SDL_FBDEV": fb}))
+        # Bookworm + Adafruit --install-type=drivers (tinydrm): SPI is often card1
+        for idx in (
+            os.environ.get("SDL_KMSDRM_DEVICE_INDEX", ""),
+            "1",
+            "0",
+            "2",
+        ):
+            if not idx:
+                continue
+            attempts.append(("kmsdrm", {"SDL_KMSDRM_DEVICE_INDEX": idx}))
+
+    # De-dupe while preserving order
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    unique: list[tuple[str, dict[str, str]]] = []
+    for driver, env in attempts:
+        key = (driver, tuple(sorted(env.items())))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((driver, env))
+
+    for driver, env in unique:
+        try:
+            screen = _try_set_mode(driver, env)
+            print(
+                f"pitft_ui: display ok driver={driver} env={env} size={screen.get_size()}",
+                flush=True,
+            )
+            return pygame, screen
+        except Exception as exc:  # noqa: BLE001 — try next backend
+            errors.append(f"{driver} {env}: {exc}")
+            try:
+                pygame.quit()
+            except Exception:
+                pass
+
+    msg = "pitft_ui: no usable display\n" + "\n".join(errors)
+    print(msg, file=sys.stderr, flush=True)
+    raise SystemExit(1)
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -90,7 +173,7 @@ def temp_color(celsius: str, hot_at: int = 105) -> tuple[int, int, int]:
     return (80, 200, 120)
 
 
-def draw_temps(screen: pygame.Surface, font_lg: pygame.font.Font, font: pygame.font.Font, info: dict[str, str]) -> None:
+def draw_temps(screen, font_lg, font, info: dict[str, str]) -> None:
     rows = [
         ("Coolant", info.get("COOLANT_C", ""), "C", 105),
         ("Oil", info.get("OIL_C", ""), "C", 120),
@@ -111,7 +194,7 @@ def draw_temps(screen: pygame.Surface, font_lg: pygame.font.Font, font: pygame.f
         screen.blit(font.render(detail, True, (160, 160, 160)), (16, 168))
 
 
-def draw_status(screen: pygame.Surface, font: pygame.font.Font, font_sm: pygame.font.Font, info: dict[str, str]) -> None:
+def draw_status(screen, font, font_sm, info: dict[str, str]) -> None:
     lines = [
         f"WiFi: {info['SSID']}",
         f"Pass: {info['AP_PASS']}",
@@ -127,8 +210,7 @@ def draw_status(screen: pygame.Surface, font: pygame.font.Font, font_sm: pygame.
 
 
 def main() -> None:
-    pygame.init()
-    screen = pygame.display.set_mode((W, H))
+    pygame, screen = init_display()
     pygame.mouse.set_visible(True)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("dejavusans", 16)

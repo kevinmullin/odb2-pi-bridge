@@ -29,7 +29,7 @@ cd odb2-pi-bridge
 sudo SKIP_PAIR=1 ./install.sh
 ```
 
-If the PiTFT is attached, install Adafruit **`28r`** drivers **before** or after this (see [PITFT.md](PITFT.md)), then reboot so `/dev/fb1` exists and the UI starts.
+If the PiTFT is attached, install Adafruit **`28r`** with `--install-type=drivers` (**not** `console` / `mirror` — see [PITFT.md](PITFT.md)), then reboot so the UI can own the panel.
 
 Defaults:
 
