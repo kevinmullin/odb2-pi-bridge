@@ -114,37 +114,65 @@ EOF
 
 discover_mac() {
   log "Scanning ${BT_SCAN_SECONDS}s for adapters matching /${BT_NAME_REGEX}/ …"
+  append_event "BT scan ${BT_SCAN_SECONDS}s (watch for OBDII)"
   bluetoothctl power on >/dev/null 2>&1 || true
   bluetoothctl pairable on >/dev/null 2>&1 || true
   bluetoothctl scan on >/dev/null 2>&1 || true
-  sleep "${BT_SCAN_SECONDS}"
+
+  local elapsed=0
+  local step=5
+  while [[ "${elapsed}" -lt "${BT_SCAN_SECONDS}" ]]; do
+    sleep "${step}"
+    elapsed=$((elapsed + step))
+    if [[ "${elapsed}" -gt "${BT_SCAN_SECONDS}" ]]; then
+      break
+    fi
+    # Early exit if we already see a matching name
+    if bluetoothctl devices 2>/dev/null | grep -Eiq "${BT_NAME_REGEX}"; then
+      append_event "match visible mid-scan (${elapsed}s)"
+      break
+    fi
+    if [[ $((elapsed % 10)) -eq 0 ]]; then
+      append_event "still scanning… ${elapsed}s"
+    fi
+  done
+  # Finish remaining sleep if we broke early on match — still give a moment
   bluetoothctl scan off >/dev/null 2>&1 || true
 
   local line mac name
-  # bluetoothctl devices may show previously seen devices too
   while IFS= read -r line; do
-    # Device AA:BB:CC:DD:EE:FF Name Here
     mac="$(echo "${line}" | awk '{print $2}')"
     name="$(echo "${line}" | cut -d' ' -f3-)"
     if echo "${name}" | grep -Eiq "${BT_NAME_REGEX}"; then
+      append_event "FOUND ${name} ${mac}"
       printf '%s\t%s\n' "$(normalize_mac "${mac}")" "${name}"
       return 0
     fi
   done < <(bluetoothctl devices 2>/dev/null || true)
 
+  # Surface what we did see on the PiTFT (no SSH needed)
+  local count named_line short_name
+  count="$(bluetoothctl devices 2>/dev/null | wc -l | tr -d ' ')"
+  append_event "scan done: ${count:-0} BT device(s), no OBD name match"
+  while IFS= read -r line; do
+    name="$(echo "${line}" | cut -d' ' -f3-)"
+    mac="$(echo "${line}" | awk '{print $2}')"
+    # Skip entries whose "name" is just the MAC repeated
+    if [[ -z "${name}" || "${name}" == "${mac}" ]]; then
+      continue
+    fi
+    short_name="$(echo "${name}" | cut -c1-28)"
+    append_event "saw: ${short_name}"
+  done < <(bluetoothctl devices 2>/dev/null | head -n 8 || true)
+
   err "No Bluetooth device matched /${BT_NAME_REGEX}/"
-  local seen named
-  named="$(bluetoothctl devices 2>/dev/null | grep -Eiv 'Device ([0-9A-F:]{17}) \1$' | head -n 6 || true)"
-  seen="$(bluetoothctl devices 2>/dev/null | head -n 6 | sed 's/^Device //' || true)"
-  if [[ -n "${named}" ]]; then
-    err "Named BT: $(echo "${named}" | sed 's/^Device //' | tr '\n' ' ' | cut -c1-120)"
-  fi
-  if [[ -n "${seen}" ]]; then
-    err "Nearby BT: $(echo "${seen}" | tr '\n' ' ' | cut -c1-120)"
+  named_line="$(bluetoothctl devices 2>/dev/null | awk '{$1="";$2=""; sub(/^  /,""); print}' | grep -v '^$' | grep -Eiv '^[0-9A-Fa-f:]{17}$' | head -n 4 | tr '\n' ',' | sed 's/,$//' || true)"
+  if [[ -n "${named_line}" ]]; then
+    err "Named BT: ${named_line}"
   else
-    err "Nearby BT: (none discovered — BAFX off, out of range, or already paired to phone)"
+    err "Named BT: (none — only unnamed MACs or empty scan)"
   fi
-  err "Power the BAFX (ignition ON). If its name is odd, set BT_MAC=.. in ${CONFIG_ENV}"
+  err "Nearby count: ${count:-0}. Need name OBDII with LED on; forget it on phone/Mac first"
   return 1
 }
 

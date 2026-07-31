@@ -47,25 +47,23 @@ read_device() {
 }
 
 last_pair_reason() {
-  # Prefer the real failure, not the trailing "set BT_MAC" hint.
+  # Prefer the real failure, not trailing hints.
   local blob="$1"
   local line
-  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR: No Bluetooth device matched' | tail -n 1 | sed 's/.*ERROR: //' || true)"
-  if [[ -n "${line}" ]]; then
-    printf '%s\n' "${line}"
-    return
-  fi
-  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR: Nearby BT:' | tail -n 1 | sed 's/.*ERROR: //' || true)"
-  if [[ -n "${line}" ]]; then
-    printf '%s\n' "${line}"
-    return
-  fi
-  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR:' | grep -v 'set BT_MAC' | grep -v 're-run pair' | grep -v 'Power the BAFX' | tail -n 1 | sed 's/.*ERROR: //' || true)"
-  if [[ -n "${line}" ]]; then
-    printf '%s\n' "${line}"
-    return
-  fi
-  printf '%s\n' "pair failed"
+  for pat in \
+    'ERROR: No Bluetooth device matched' \
+    'ERROR: Named BT:' \
+    'ERROR: Nearby count:' \
+    'ERROR: Failed to pair' \
+    ; do
+    line="$(printf '%s\n' "${blob}" | grep -E "${pat}" | tail -n 1 | sed 's/.*ERROR: //' || true)"
+    if [[ -n "${line}" ]]; then
+      printf '%s\n' "${line}"
+      return
+    fi
+  done
+  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR:' | grep -v 'set BT_MAC' | grep -v 're-run' | grep -v 'Forget' | tail -n 1 | sed 's/.*ERROR: //' || true)"
+  printf '%s\n' "${line:-pair failed}"
 }
 
 append_event "autopair started (retry ${RETRY_SECONDS}s)"
@@ -91,12 +89,12 @@ while true; do
   bluetoothctl power on >/dev/null 2>&1 || true
   bluetoothctl pairable on >/dev/null 2>&1 || true
 
-  write_status "waiting" "Ignition ON + BAFX LED on"
-  append_event "no MAC yet — need BAFX + ignition"
+  write_status "waiting" "BAFX LED on; forget OBDII on phone/Mac"
+  append_event "no MAC — power BAFX, Mac/phone BT forget OBDII"
   log "No BT_MAC yet — scanning/pairing…"
 
-  write_status "scanning" "Scan ${BT_SCAN_SECONDS}s /${BT_NAME_REGEX}/"
-  append_event "scanning ${BT_SCAN_SECONDS}s for /${BT_NAME_REGEX}/"
+  write_status "scanning" "Scan ${BT_SCAN_SECONDS}s for OBDII"
+  append_event "scanning ${BT_SCAN_SECONDS}s for OBDII (no SSH needed)"
 
   set +e
   pair_out="$("${SCRIPT_DIR}/pair-bafx.sh" 2>&1)"
