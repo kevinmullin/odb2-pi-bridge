@@ -115,6 +115,7 @@ EOF
 discover_mac() {
   log "Scanning ${BT_SCAN_SECONDS}s for adapters matching /${BT_NAME_REGEX}/ …"
   bluetoothctl power on >/dev/null 2>&1 || true
+  bluetoothctl pairable on >/dev/null 2>&1 || true
   bluetoothctl scan on >/dev/null 2>&1 || true
   sleep "${BT_SCAN_SECONDS}"
   bluetoothctl scan off >/dev/null 2>&1 || true
@@ -131,17 +132,19 @@ discover_mac() {
     fi
   done < <(bluetoothctl devices 2>/dev/null || true)
 
-  # Also check scan dump via bluetoothctl devices Controllers / recent
   err "No Bluetooth device matched /${BT_NAME_REGEX}/"
-  local seen
-  seen="$(bluetoothctl devices 2>/dev/null | head -n 4 | sed 's/^Device //' || true)"
+  local seen named
+  named="$(bluetoothctl devices 2>/dev/null | grep -Eiv 'Device ([0-9A-F:]{17}) \1$' | head -n 6 || true)"
+  seen="$(bluetoothctl devices 2>/dev/null | head -n 6 | sed 's/^Device //' || true)"
+  if [[ -n "${named}" ]]; then
+    err "Named BT: $(echo "${named}" | sed 's/^Device //' | tr '\n' ' ' | cut -c1-120)"
+  fi
   if [[ -n "${seen}" ]]; then
     err "Nearby BT: $(echo "${seen}" | tr '\n' ' ' | cut -c1-120)"
   else
-    err "Nearby BT: (none discovered — adapter off or out of range)"
+    err "Nearby BT: (none discovered — BAFX off, out of range, or already paired to phone)"
   fi
-  err "Power the BAFX (ignition ON) and wait for autopair, or: sudo obd-bridge pair"
-  err "Or set BT_MAC=.. in ${CONFIG_ENV} and re-run pair."
+  err "Power the BAFX (ignition ON). If its name is odd, set BT_MAC=.. in ${CONFIG_ENV}"
   return 1
 }
 

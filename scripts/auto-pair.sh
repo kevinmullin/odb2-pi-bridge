@@ -47,16 +47,25 @@ read_device() {
 }
 
 last_pair_reason() {
-  # Prefer last ERROR line from pair script output.
+  # Prefer the real failure, not the trailing "set BT_MAC" hint.
   local blob="$1"
   local line
-  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR:' | tail -n 1 | sed 's/.*ERROR: //' || true)"
+  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR: No Bluetooth device matched' | tail -n 1 | sed 's/.*ERROR: //' || true)"
   if [[ -n "${line}" ]]; then
     printf '%s\n' "${line}"
     return
   fi
-  line="$(printf '%s\n' "${blob}" | tail -n 1 || true)"
-  printf '%s\n' "${line:-pair failed}"
+  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR: Nearby BT:' | tail -n 1 | sed 's/.*ERROR: //' || true)"
+  if [[ -n "${line}" ]]; then
+    printf '%s\n' "${line}"
+    return
+  fi
+  line="$(printf '%s\n' "${blob}" | grep -E 'ERROR:' | grep -v 'set BT_MAC' | grep -v 're-run pair' | grep -v 'Power the BAFX' | tail -n 1 | sed 's/.*ERROR: //' || true)"
+  if [[ -n "${line}" ]]; then
+    printf '%s\n' "${line}"
+    return
+  fi
+  printf '%s\n' "pair failed"
 }
 
 append_event "autopair started (retry ${RETRY_SECONDS}s)"
@@ -78,6 +87,9 @@ while true; do
     sleep "${RETRY_SECONDS}"
     continue
   fi
+
+  bluetoothctl power on >/dev/null 2>&1 || true
+  bluetoothctl pairable on >/dev/null 2>&1 || true
 
   write_status "waiting" "Ignition ON + BAFX LED on"
   append_event "no MAC yet — need BAFX + ignition"
